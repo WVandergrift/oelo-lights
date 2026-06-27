@@ -8,91 +8,158 @@ const char WEB_UI[] PROGMEM = R"HTML(
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>LeafFilter Light Test</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#07120d">
+  <title>Leaf Lights</title>
   <style>
-    :root{color-scheme:dark;font-family:system-ui,sans-serif;background:#101411;color:#edf4ee}
-    body{max-width:900px;margin:auto;padding:18px}h1{margin-bottom:4px}h2{font-size:1.1rem}
-    .muted{color:#9eaaa0}.card{background:#19201b;border:1px solid #344039;border-radius:12px;padding:16px;margin:14px 0}
-    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
-    label{display:block;font-size:.85rem;color:#b9c5bb}input,select,button{box-sizing:border-box;width:100%;padding:10px;margin-top:4px;border-radius:8px;border:1px solid #465349;background:#101411;color:#edf4ee}
-    input[type=color]{height:44px;padding:3px}input[type=checkbox]{width:auto}.enabled{display:flex;gap:8px;align-items:center;padding-top:22px}
-    button{cursor:pointer;background:#247a42;border-color:#329f59;font-weight:650}.danger{background:#7d2525;border-color:#b13b3b}.preset{background:#29342c;border-color:#465349}
-    .status{padding:10px;border-radius:8px;background:#101411;white-space:pre-wrap}.zone{border-top:1px solid #344039;padding-top:12px;margin-top:12px}
+    :root{color-scheme:dark;--bg:#07120d;--panel:#0d1d16;--panel2:#12261d;--line:#284438;--text:#f4f7f5;--muted:#9cb0a5;--green:#37d27d;--green2:#159653;--red:#ef6262;--amber:#ffc568;--shadow:0 18px 50px #0008;font-family:Inter,ui-rounded,"SF Pro Rounded",system-ui,sans-serif}
+    *{box-sizing:border-box}html{background:var(--bg)}body{margin:0;overflow-x:hidden;background:radial-gradient(circle at 50% -10%,#153c29 0,transparent 36rem),var(--bg);color:var(--text);min-height:100vh}button,input,select{font:inherit}button{color:inherit}.app{width:100%;max-width:1180px;margin:auto;padding:0 22px 100px}.card,.hero>*,.editor-layout>*{min-width:0}
+    .topbar{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:18px;padding:18px 0;background:linear-gradient(#07120df5 70%,transparent);backdrop-filter:blur(12px)}.brand{display:flex;align-items:center;gap:11px;min-width:max-content}.brandmark{display:grid;place-items:center;width:42px;height:42px;border-radius:14px;background:linear-gradient(145deg,#3ee38b,#117844);box-shadow:0 8px 26px #13a85b55}.brandmark svg{width:25px}.brand strong{font-size:1.1rem}.brand small{display:block;color:var(--muted);font-size:.72rem;margin-top:1px}.spacer{flex:1}.connection{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:.82rem}.dot{width:8px;height:8px;border-radius:50%;background:var(--amber);box-shadow:0 0 12px currentColor}.dot.online{background:var(--green)}
+    .btn{border:1px solid var(--line);background:#13251d;padding:11px 16px;border-radius:12px;font-weight:750;cursor:pointer;min-height:44px}.btn:hover{border-color:#4b7461;background:#193126}.btn.primary{background:linear-gradient(135deg,var(--green2),#0b743c);border-color:#36c577}.btn.ghost{background:transparent}.btn.danger{color:#ffd9d9;border-color:#713e3e;background:#2b1717}.btn.small{padding:8px 12px;min-height:38px;font-size:.86rem}.iconbtn{width:44px;height:44px;padding:0;border-radius:50%}.desktop-nav{display:flex;gap:4px;padding:4px;border:1px solid var(--line);background:#0b1913;border-radius:14px}.desktop-nav button{border:0;background:transparent;padding:9px 13px;border-radius:10px;color:var(--muted);font-weight:700;cursor:pointer}.desktop-nav button.active{background:var(--panel2);color:var(--text)}
+    main{min-height:65vh}.view{display:none}.view.active{display:block}.eyebrow{text-transform:uppercase;letter-spacing:.16em;font-size:.7rem;font-weight:850;color:var(--green)}h1{font-size:clamp(2rem,6vw,4.4rem);line-height:1.02;margin:9px 0 12px;letter-spacing:-.045em}h2{font-size:1.35rem;margin:0}h3{margin:0;font-size:1.05rem}.lead{color:var(--muted);max-width:620px;line-height:1.55}.section-head{display:flex;align-items:end;justify-content:space-between;gap:18px;margin:34px 0 15px}.section-head p{margin:5px 0 0;color:var(--muted);font-size:.9rem}
+    .hero{display:grid;grid-template-columns:1.1fr .9fr;gap:18px;margin-top:18px}.card{background:linear-gradient(150deg,#10231a,#0a1711);border:1px solid var(--line);border-radius:22px;padding:22px;box-shadow:0 1px 0 #ffffff08 inset}.hero-copy{padding:34px}.hero-copy .btn{margin-top:18px}.control-card{overflow:hidden}.live-label{display:flex;justify-content:space-between;align-items:center;margin-bottom:15px}.now{color:var(--green);font-size:.8rem;font-weight:800}.preview{display:flex;align-items:center;gap:7px;overflow:hidden;min-height:58px;padding:13px;border-radius:16px;background:#030806;border:1px solid #20352c}.preview.large{min-height:88px;gap:9px}.led{flex:0 0 auto;width:20px;height:20px;border-radius:50%;background:#101713;border:1px solid #597066;box-shadow:0 0 0 transparent;transition:background .12s,box-shadow .12s,opacity .12s}.preview.large .led{width:25px;height:25px}.led.on{border-color:#d9f2e5;box-shadow:0 0 12px var(--c),0 0 25px color-mix(in srgb,var(--c),transparent 55%)}
+    .range-row{display:grid;grid-template-columns:auto 1fr 44px;align-items:center;gap:12px;margin-top:18px}.range-row output{font-variant-numeric:tabular-nums;text-align:right;color:var(--muted)}input[type=range]{width:100%;accent-color:var(--green)}.swatches{display:flex;gap:10px;overflow:auto;padding:12px 2px 3px;scrollbar-width:none}.swatch{width:42px;height:42px;flex:0 0 auto;border-radius:13px;border:2px solid #ffffff5c;background:var(--c);cursor:pointer;box-shadow:0 5px 14px #0008}.custom-color{position:relative;background:conic-gradient(red,#ff0,#0f0,#0ff,#00f,#f0f,red)}.custom-color input{position:absolute;inset:0;opacity:0;width:100%;cursor:pointer}
+    .zone-picker{display:flex;gap:9px;overflow:auto;padding:3px 1px 4px;scrollbar-width:none}.chip{border:1px solid var(--line);background:#0a1711;color:var(--muted);padding:9px 13px;border-radius:999px;white-space:nowrap;cursor:pointer;font-weight:700}.chip.active{color:#062213;background:var(--green);border-color:var(--green)}
+    .pattern-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}.pattern-card{padding:18px}.pattern-title{display:flex;align-items:start;justify-content:space-between;gap:10px;margin-bottom:14px}.pattern-title span{color:var(--muted);font-size:.75rem;text-transform:uppercase;letter-spacing:.09em;font-weight:800}.pattern-meta{display:flex;gap:8px;flex-wrap:wrap;margin:13px 0}.tag{border:1px solid var(--line);background:#0a1711;color:var(--muted);padding:5px 8px;border-radius:8px;font-size:.75rem}.actions{display:flex;gap:8px}.actions .btn{flex:1}.empty{text-align:center;padding:54px 20px;color:var(--muted)}
+    .editor-layout{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(280px,.75fr);gap:18px}.field{display:block;color:var(--muted);font-size:.8rem;font-weight:700}.field input,.field select{width:100%;border:1px solid var(--line);background:#08150f;color:var(--text);border-radius:11px;padding:11px;margin-top:6px;min-height:44px}.form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:13px}.movement-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;margin-top:14px}.movement{border:1px solid var(--line);background:#091710;border-radius:14px;padding:10px 7px;cursor:pointer;color:var(--muted);font-size:.78rem;font-weight:750}.movement.active{border-color:var(--green);background:#102c1d;color:var(--text);box-shadow:0 0 0 1px var(--green) inset}.movement .mini{display:flex;height:26px;align-items:center;justify-content:center;gap:3px;margin-bottom:7px;overflow:hidden}.movement .mini i{width:7px;height:7px;border-radius:50%;background:#2f4339}.palette-editor{display:flex;gap:9px;overflow:auto;padding:9px 2px 12px}.color-edit{position:relative;flex:0 0 auto;width:46px;height:46px;border-radius:14px;border:2px solid #ffffff7a;background:var(--c);overflow:hidden}.color-edit input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer}.color-edit button{position:absolute;right:-2px;top:-2px;width:19px;height:19px;border:0;border-radius:50%;background:#000b;color:white;cursor:pointer;font-size:12px;line-height:18px;padding:0}.add-color{display:grid;place-items:center;background:#14261e;color:var(--green);font-size:1.4rem;border-style:dashed;cursor:pointer}.editor-actions{display:flex;gap:10px;margin-top:18px;flex-wrap:wrap}.editor-actions .btn{flex:1;min-width:130px}.sticky-preview{position:sticky;top:96px}.summary{margin:18px 0;padding:14px;border-radius:14px;background:#07130e;border:1px solid var(--line);color:var(--muted);line-height:1.55}.summary strong{color:var(--text)}
+    details.card{padding:0;overflow:hidden;margin-bottom:13px}details summary{list-style:none;cursor:pointer;padding:19px 22px;font-weight:800;display:flex;justify-content:space-between}details summary::-webkit-details-marker{display:none}details summary:after{content:'+';color:var(--green);font-size:1.25rem}details[open] summary:after{content:'−'}details .details-body{border-top:1px solid var(--line);padding:20px 22px}.note{border-left:3px solid var(--green);background:#0b2116;padding:13px 14px;border-radius:0 10px 10px 0;color:var(--muted);font-size:.86rem;line-height:1.5;margin:12px 0}.zone-config{display:grid;grid-template-columns:74px 1fr 120px 100px;gap:10px;align-items:end;padding:12px 0;border-bottom:1px solid #20372d}.check{display:flex;align-items:center;gap:8px;min-height:44px}.check input{width:20px;height:20px;accent-color:var(--green)}.statusbox{background:#030806;border:1px solid var(--line);border-radius:12px;padding:14px;white-space:pre-wrap;color:#a9c5b5;font:12px/1.55 ui-monospace,monospace;overflow:auto}.settings-actions{margin-top:15px}.wled-state{font-size:.8rem;color:var(--muted);margin-top:10px}
+    .bottom-nav{display:none;position:fixed;z-index:30;bottom:0;left:0;right:0;padding:8px max(12px,env(safe-area-inset-left)) calc(8px + env(safe-area-inset-bottom));background:#07120df5;border-top:1px solid var(--line);backdrop-filter:blur(18px)}.bottom-nav button{flex:1;border:0;background:transparent;color:var(--muted);padding:8px 3px;border-radius:10px;font-size:.7rem;font-weight:750}.bottom-nav b{display:block;font-size:1.15rem;margin-bottom:2px}.bottom-nav button.active{color:var(--green);background:#10251a}.toast{position:fixed;z-index:99;left:50%;bottom:28px;transform:translate(-50%,20px);opacity:0;pointer-events:none;background:#e9fff1;color:#082516;border-radius:12px;padding:12px 17px;font-weight:750;box-shadow:var(--shadow);transition:.22s}.toast.show{opacity:1;transform:translate(-50%,0)}.toast.error{background:#ffdede;color:#4d1111}.loading{opacity:.55;pointer-events:none}
+    @media(max-width:800px){.app{padding:0 14px 100px}.desktop-nav{display:none}.connection span{display:none}.bottom-nav{display:flex}.toast{bottom:90px;max-width:calc(100% - 28px);text-align:center}.hero,.editor-layout{grid-template-columns:1fr}.hero-copy{padding:23px}.sticky-preview{position:static;order:-1}.movement-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.pattern-grid{grid-template-columns:1fr}.zone-config{grid-template-columns:70px 1fr 1fr}.zone-config .order{grid-column:2/4}.topbar{gap:10px}.brand small{display:none}.topbar>.btn span{display:none}.topbar>.btn{width:44px;padding:0}.preview.large .led{width:22px;height:22px}.form-grid{grid-template-columns:1fr 1fr}}
+    @media(max-width:430px){.brand strong{font-size:1rem}.connection{display:none}.movement-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.form-grid{grid-template-columns:1fr}.actions .btn{padding:10px 8px}.zone-config{grid-template-columns:64px 1fr}.zone-config .count,.zone-config .order{grid-column:auto}.preview{gap:5px}.preview.large{gap:6px}.led{width:18px;height:18px}.preview.large .led{width:20px;height:20px}}
+    @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}.led{box-shadow:none!important}}
   </style>
 </head>
 <body>
-  <h1>LeafFilter Light Test</h1>
-  <div class="muted">UCS1903 · 400 kHz · two physical pixels per fixture</div>
+<div class="app">
+  <header class="topbar">
+    <div class="brand"><div class="brandmark"><svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.8"><path d="M19.5 3.5C10 4 4.4 8.1 5.1 15.6c4-1.2 7.1-3.6 9.8-7.2-1.8 4-4.5 7-8.5 8.8"/><path d="M6.5 17.1c-1.4.8-2.2 1.9-2.5 3.4"/></svg></div><div><strong>Leaf Lights</strong><small>Oelo controller</small></div></div>
+    <nav class="desktop-nav" aria-label="Primary"><button data-nav="home">Home</button><button data-nav="patterns">Patterns</button><button data-nav="create">Create</button><button data-nav="settings">Settings</button></nav>
+    <div class="spacer"></div><div class="connection"><i id="connDot" class="dot"></i><span id="connText">Connecting</span></div><button class="btn danger" onclick="allOff()" aria-label="Turn all zones off">■ <span>All off</span></button>
+  </header>
 
-  <section class="card">
-    <h2>Live test</h2>
-    <div class="grid">
-      <label>Zone<select id="testZone"></select></label>
-      <label>Color<input id="color" type="color" value="#100000"></label>
-      <label>Brightness<input id="brightness" type="range" min="1" max="255" value="32"></label>
-    </div>
-    <div class="grid" style="margin-top:10px">
-      <button onclick="fireworks()">🎆 Fast Fireworks—all zones</button>
-      <button onclick="sendColor()">Apply color</button>
-      <button class="preset" onclick="preset(16,0,0)">Dim red</button>
-      <button class="preset" onclick="preset(0,16,0)">Dim green</button>
-      <button class="preset" onclick="preset(0,0,16)">Dim blue</button>
-      <button class="danger" onclick="allOff()">All off</button>
-    </div>
-    <div id="message" class="status" style="margin-top:10px">Loading…</div>
-  </section>
+  <main>
+    <section id="view-home" class="view">
+      <div class="hero">
+        <div class="card hero-copy"><div class="eyebrow">Outdoor lighting</div><h1>Make tonight<br>look good.</h1><p class="lead">Choose your zones, pick a color or start a saved pattern. Changes happen only when you press Play.</p><button class="btn primary" onclick="showView('patterns')">Browse patterns</button></div>
+        <div class="card control-card"><div class="live-label"><div><div class="eyebrow">Now showing</div><h3 id="nowName">Lights off</h3></div><span class="now" id="nowMode">OFF</span></div><div id="livePreview" class="preview large" data-preview="active"></div><div class="range-row"><span>☀</span><input id="homeBrightness" type="range" min="1" max="255" value="32" oninput="brightnessPreview(this.value)" onchange="setBrightness(this.value)"><output id="brightnessValue">13%</output></div><div class="swatches" id="quickColors"></div></div>
+      </div>
+      <div class="section-head"><div><h2>Where?</h2><p>Select one or more zones before playing a color or pattern.</p></div></div><div class="zone-picker" id="homeZones"></div>
+      <div class="section-head"><div><h2>Quick starts</h2><p>Your first saved patterns, ready to play.</p></div><button class="btn ghost small" onclick="showView('patterns')">See all</button></div><div id="quickPatterns" class="pattern-grid"></div>
+    </section>
 
-  <section class="card">
-    <h2>Zone configuration</h2>
-    <div class="muted">Counts are logical LeafFilter/Oelo fixtures. Firmware sends two UCS1903 pixels per fixture. Saving reboots the controller.</div>
-    <form id="zones"></form>
-    <button onclick="saveZones(event)">Save zones and reboot</button>
-  </section>
+    <section id="view-patterns" class="view">
+      <div class="section-head"><div><div class="eyebrow">Your collection</div><h1>Patterns</h1><p>Animated previews run only in this browser.</p></div><button class="btn primary" onclick="newPattern()">＋ New pattern</button></div>
+      <div class="zone-picker" id="patternZones"></div><div id="patternGrid" class="pattern-grid" style="margin-top:18px"></div>
+    </section>
 
-  <section class="card">
-    <h2>Home Wi-Fi</h2>
-    <div class="muted">The open OELO_1-23.0 setup AP remains active for LeafFilter app compatibility.</div>
-    <form id="network" class="grid">
-      <label>Wi-Fi name<input name="ssid" id="ssid" autocomplete="username"></label>
-      <label>Password<input name="password" type="password" autocomplete="current-password"></label>
-    </form>
-    <button onclick="saveNetwork(event)">Save Wi-Fi and reboot</button>
-  </section>
+    <section id="view-create" class="view">
+      <div class="section-head"><div><div class="eyebrow">Pattern studio</div><h1 id="editorHeading">New pattern</h1><p>Build it, preview it, then test it on the selected zones.</p></div></div>
+      <div class="editor-layout">
+        <div>
+          <div class="card"><label class="field">Pattern name<input id="patternName" maxlength="48" placeholder="Summer evening" oninput="readEditor()"></label><div class="section-head"><div><h3>Movement</h3><p id="movementDescription">A fixed repeating palette.</p></div></div><div id="movementGrid" class="movement-grid"></div></div>
+          <div class="card" style="margin-top:18px"><div class="section-head" style="margin-top:0"><div><h3>Colors</h3><p>Tap a color to edit it. Use × to remove one.</p></div><span id="colorCount" class="tag">1 color</span></div><div id="paletteEditor" class="palette-editor"></div><div class="swatches" id="editorPresets"></div></div>
+          <div class="card" style="margin-top:18px"><div class="form-grid"><label class="field">Speed <output id="speedOut">10</output><input id="patternSpeed" type="range" min="1" max="20" value="10" oninput="speedOut.textContent=this.value;readEditor()"></label><label class="field">Direction<select id="patternDirection" onchange="readEditor()"><option value="F">Forward</option><option value="R">Reverse</option></select></label><label class="field">Gap<input id="patternGap" type="number" min="0" max="255" value="0" oninput="readEditor()"></label><label class="field">Width / other<input id="patternOther" type="number" min="0" max="255" value="0" oninput="readEditor()"></label><label class="field">Pause<input id="patternPause" type="number" min="0" max="255" value="0" oninput="readEditor()"></label></div></div>
+        </div>
+        <aside class="card sticky-preview"><div class="eyebrow">Live preview</div><h2 id="previewName" style="margin:7px 0 16px">Untitled pattern</h2><div id="editorPreview" class="preview large" data-preview="editor"></div><div id="editorSummary" class="summary"></div><div class="zone-picker" id="editorZones"></div><div class="editor-actions"><button class="btn" onclick="testEditor()">Test on lights</button><button class="btn primary" onclick="saveEditor()">Save pattern</button><button class="btn ghost" onclick="showView('patterns')">Cancel</button></div></aside>
+      </div>
+    </section>
+
+    <section id="view-settings" class="view">
+      <div class="section-head"><div><div class="eyebrow">Controller</div><h1>Settings</h1><p>Daily controls stay simple; installation options live here.</p></div></div>
+      <details class="card" open><summary>WLED realtime sync</summary><div class="details-body"><div class="note"><strong>Exact-frame sync:</strong> the controller broadcasts its rendered pixels using DDP instead of guessing at WLED effect names. Use <b>255.255.255.255</b> to reach every WLED receiver on the LAN, or enter one device IP.</div><form id="wledForm"><div class="form-grid"><label class="check"><input name="enabled" id="wledEnabled" type="checkbox" value="1"> Sync to WLED</label><label class="field">Destination<input name="destination" id="wledDestination" value="255.255.255.255" inputmode="decimal"></label><label class="field">Virtual pixel count<input name="pixelCount" id="wledPixels" type="number" min="1" max="1000" value="300"></label><label class="field">Source zone<select name="sourceZone" id="wledSource"><option value="-1">Auto (first active)</option></select></label></div><button class="btn primary settings-actions" onclick="saveWled(event)">Save WLED sync</button></form><div class="wled-state" id="wledStatus"></div><div class="note">On each receiving WLED controller, leave DDP realtime reception available and enable <b>Force max brightness</b> under Sync Interfaces → Realtime so the brightness already encoded in these frames is not dimmed a second time. Set the virtual count to the receiver strip length for a full-span animation.</div></div></details>
+      <details class="card"><summary>Zones and LED hardware</summary><div class="details-body"><div class="note">Counts are logical Oelo fixtures. Each fixture is transmitted as two UCS1903 pixels. Saving these settings reboots the controller.</div><form id="zonesForm"></form><button class="btn primary settings-actions" onclick="saveZones(event)">Save zones and reboot</button></div></details>
+      <details class="card"><summary>Home Wi‑Fi</summary><div class="details-body"><div class="note">The open <b>OELO_1-23.0</b> setup network stays active for LeafFilter offline-mode compatibility.</div><form id="networkForm" class="form-grid"><label class="field">Wi‑Fi name<input name="ssid" id="ssid" autocomplete="username"></label><label class="field">Password<input name="password" type="password" autocomplete="current-password"></label></form><button class="btn primary settings-actions" onclick="saveNetwork(event)">Save Wi‑Fi and reboot</button></div></details>
+      <details class="card"><summary>Diagnostics</summary><div class="details-body"><div id="statusBox" class="statusbox">Loading…</div><button class="btn settings-actions" onclick="loadAll()">Refresh status</button></div></details>
+    </section>
+  </main>
+</div>
+
+<nav class="bottom-nav" aria-label="Primary"><button data-nav="home"><b>⌂</b>Home</button><button data-nav="patterns"><b>✦</b>Patterns</button><button data-nav="create"><b>＋</b>Create</button><button data-nav="settings"><b>⚙</b>Settings</button></nav>
+<div id="toast" class="toast" role="status"></div>
 
 <script>
-let state;
-const orders=['RGB','RBG','GRB','GBR','BRG','BGR'];
-const msg=t=>document.getElementById('message').textContent=t;
-async function load(){
-  state=await (await fetch('/api/status')).json();
-  document.getElementById('brightness').value=state.brightness;
-  document.getElementById('ssid').value=state.wifi.ssid||'';
-  const sel=document.getElementById('testZone'); sel.innerHTML='';
-  const form=document.getElementById('zones'); form.innerHTML='';
-  state.zones.forEach((z,i)=>{
-    sel.insertAdjacentHTML('beforeend',`<option value="${i}">${i+1}: ${z.name}</option>`);
-    form.insertAdjacentHTML('beforeend',`<div class="zone grid">
-      <label class="enabled"><input type="checkbox" name="en${i}" ${z.enabled?'checked':''}> Enabled</label>
-      <label>Name<input name="name${i}" maxlength="24" value="${escapeHtml(z.name)}"></label>
-      <label>Fixture count<input name="cnt${i}" type="number" min="1" max="1000" value="${z.count}"></label>
-      <label>Color order<select name="ord${i}">${orders.map(o=>`<option ${o===z.order?'selected':''}>${o}</option>`).join('')}</select></label>
-    </div>`);
-  });
-  msg(`AP: ${state.wifi.apSsid} · ${state.wifi.apIp}\nLAN: ${state.wifi.connected?state.wifi.lanIp:'not connected'} · leaflights.local`);
+const movementInfo={stationary:'A fixed repeating palette.',arcade:'A bright runner with a trailing pixel.',blend:'A moving gradient across the roofline.',bolt:'A short, fast streak with a fading tail.',chase:'Groups of color separated by dark gaps.',fade:'The whole display fades between colors.',fill:'Fills the line one fixture at a time.',lightning:'Brief, irregular flashes of your colors.',march:'Moves the exact color sequence one step at a time.',river:'A wider, flowing version of March.',shuffle:'Randomly rearranges palette colors.',split:'Color travels outward from the center.',sprinkle:'Sparse color sparks fade in and out.',streak:'A single color streak runs along the line.',storm:'Cool white lightning with longer pauses.',takeover:'Each new color gradually replaces the last.',twinkle:'Random palette colors sparkle and fade.'};
+const movements=Object.keys(movementInfo),orders=['RGB','RBG','GRB','GBR','BRG','BGR'];
+const presets=['#ff3030','#ffffff','#164cff','#19d96f','#ffc21c','#ff6d2d','#9a5cff','#16d8df','#ff3ea5','#101010'];
+let controller=null,patterns=[],selectedZones=new Set(),currentPattern=null,editor=null,currentView='home',toastTimer,brightnessTimer;
+
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function message(text,error=false){const t=$('toast');t.textContent=text;t.className='toast show'+(error?' error':'');clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.className='toast',2800)}
+async function request(url,options){const r=await fetch(url,options);const text=await r.text();if(!r.ok)throw Error(text||`Request failed (${r.status})`);return text}
+function parseColors(p){if(Array.isArray(p.colors))return p.colors;const nums=String(p.colors||'').split(/[,&]/).filter(v=>v!=='').map(Number),out=[];for(let i=0;i+2<nums.length;i+=3)out.push(rgbHex(nums[i],nums[i+1],nums[i+2]));return out.length?out:['#ffffff']}
+function rgbHex(r,g,b){return '#'+[r,g,b].map(v=>Math.max(0,Math.min(255,Number(v)||0)).toString(16).padStart(2,'0')).join('')}
+function hexRgb(h){h=String(h||'#000000').replace('#','');return [0,2,4].map(i=>parseInt(h.slice(i,i+2),16)||0)}
+function normalizePattern(p,i=0){return{id:Number(p.id)||i+1,name:p.name||`Pattern ${i+1}`,type:String(p.type||p.patternType||'stationary').toLowerCase(),direction:String(p.direction||'F').toUpperCase()==='R'?'R':'F',speed:Math.max(1,Math.min(20,Number(p.speed)||10)),gap:Math.max(0,Number(p.gap)||0),pause:Math.max(0,Number(p.pause)||0),other:Math.max(0,Number(p.other)||0),colors:parseColors(p)}}
+function serializePattern(p){const values=p.colors.flatMap(hexRgb).join(',')+',';return{id:p.id,name:p.name,type:p.type,num_colors:p.colors.length,direction:p.direction,speed:p.speed,gap:p.gap,pause:p.pause,other:p.other,colors:values}}
+function selectedList(){if(!selectedZones.size&&controller)controller.zones.forEach((z,i)=>{if(z.enabled)selectedZones.add(i)});return [...selectedZones].sort((a,b)=>a-b)}
+
+async function loadAll(){
+  try{const [s,p]=await Promise.all([fetch('/api/status'),fetch('/getPatterns')]);if(!s.ok||!p.ok)throw Error('Controller did not respond');controller=await s.json();const raw=await p.json();patterns=Array.isArray(raw)?raw.map(normalizePattern):[];if(!selectedZones.size)controller.zones.forEach((z,i)=>{if(z.enabled)selectedZones.add(i)});currentPattern=currentPattern||{name:controller.activePattern==='off'?'Lights off':title(controller.activePattern),type:controller.activePattern||'off',colors:['#000000'],speed:10,direction:'F',gap:0,other:0};renderAll();$('connDot').classList.add('online');$('connText').textContent=controller.wifi.connected?'On home Wi‑Fi':'Setup network';}
+  catch(e){$('connText').textContent='Offline';message(e.message,true)}
 }
-function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-async function preset(r,g,b){await setColor(r,g,b)}
-async function sendColor(){const h=document.getElementById('color').value; await setColor(parseInt(h.slice(1,3),16),parseInt(h.slice(3,5),16),parseInt(h.slice(5,7),16));}
-async function setColor(r,g,b){
-  const q=new URLSearchParams({zone:document.getElementById('testZone').value,r,g,b,brightness:document.getElementById('brightness').value});
-  msg(await (await fetch('/api/color?'+q)).text());
+function renderAll(){renderNav();renderZonePickers();renderHome();renderPatterns();renderSettings();if(!editor)newPattern(false);renderEditor();renderDiagnostics()}
+function showView(name){currentView=name;document.querySelectorAll('.view').forEach(v=>v.classList.toggle('active',v.id===`view-${name}`));renderNav();scrollTo({top:0,behavior:'smooth'})}
+function renderNav(){document.querySelectorAll('[data-nav]').forEach(b=>{b.classList.toggle('active',b.dataset.nav===currentView);b.onclick=()=>{if(b.dataset.nav==='create'&&!editor)newPattern(false);showView(b.dataset.nav)}})}
+function renderZonePickers(){if(!controller)return;const html=controller.zones.map((z,i)=>z.enabled?`<button class="chip ${selectedZones.has(i)?'active':''}" onclick="toggleZone(${i})">${esc(z.name)} · ${z.count}</button>`:'').join('');['homeZones','patternZones','editorZones'].forEach(id=>$(id).innerHTML=html)}
+function toggleZone(i){selectedZones.has(i)?selectedZones.delete(i):selectedZones.add(i);if(!selectedZones.size)selectedZones.add(i);renderZonePickers()}
+
+function renderHome(){if(!controller)return;$('homeBrightness').value=controller.brightness;$('brightnessValue').textContent=Math.round(controller.brightness/255*100)+'%';$('nowName').textContent=currentPattern?.name||'Lights off';$('nowMode').textContent=title(currentPattern?.type||'off');buildPreview($('livePreview'),40);$('quickColors').innerHTML=presets.slice(0,8).map(c=>`<button class="swatch" style="--c:${c}" aria-label="Set ${c}" onclick="applySolid('${c}')"></button>`).join('')+`<label class="swatch custom-color" aria-label="Choose a color"><input type="color" value="#37d27d" onchange="applySolid(this.value)"></label>`;$('quickPatterns').innerHTML=patterns.length?patterns.slice(0,2).map((p,i)=>patternCard(p,i,false)).join(''):'<div class="card empty">No saved patterns yet.</div>';hydratePreviews()}
+function renderPatterns(){const grid=$('patternGrid');if(!grid)return;grid.innerHTML=patterns.length?patterns.map((p,i)=>patternCard(p,i,true)).join(''):'<div class="card empty">No saved patterns. Create the first one.</div>';hydratePreviews()}
+function patternCard(p,i,editable){return`<article class="card pattern-card"><div class="pattern-title"><div><h3>${esc(p.name)}</h3><span>${esc(title(p.type))}</span></div><span>${p.colors.length} colors</span></div><div class="preview" data-pattern-index="${i}"></div><div class="pattern-meta"><span class="tag">Speed ${p.speed}</span><span class="tag">${p.direction==='R'?'Reverse':'Forward'}</span>${p.gap?`<span class="tag">Gap ${p.gap}</span>`:''}</div><div class="actions"><button class="btn primary" onclick="playPattern(${i})">▶ Play</button>${editable?`<button class="btn" onclick="editPattern(${i})">Edit</button><button class="btn ghost" onclick="deletePattern(${i})" aria-label="Delete ${esc(p.name)}">Delete</button>`:''}</div></article>`}
+
+async function playPattern(i){await applyPattern(patterns[i])}
+async function applyPattern(p){try{const q=new URLSearchParams({zones:selectedList().join(','),patternType:p.type,num_colors:p.colors.length,colors:p.colors.flatMap(hexRgb).join(',')+',',speed:p.speed,gap:p.gap,pause:p.pause,other:p.other,direction:p.direction});await request('/setPattern?'+q);currentPattern={...p};if(controller)controller.activePattern=p.type;renderHome();message(`${p.name} is playing`)}catch(e){message(e.message,true)}}
+async function applySolid(color){await applyPattern({name:'Custom color',type:'stationary',colors:[color],speed:10,gap:0,pause:0,other:0,direction:'F'})}
+async function allOff(){try{await request('/api/off');currentPattern={name:'Lights off',type:'off',colors:['#000000'],speed:10,direction:'F',gap:0,other:0};renderHome();message('All lights are off')}catch(e){message(e.message,true)}}
+function brightnessPreview(v){$('brightnessValue').textContent=Math.round(v/255*100)+'%'}
+function setBrightness(v){clearTimeout(brightnessTimer);brightnessTimer=setTimeout(async()=>{try{await request('/api/brightness?value='+v);controller.brightness=Number(v);message('Brightness updated')}catch(e){message(e.message,true)}},100)}
+
+function newPattern(navigate=true){editor={id:null,name:'',type:'stationary',direction:'F',speed:10,gap:0,pause:0,other:0,colors:['#ff3030','#ffffff','#164cff']};renderEditor();if(navigate)showView('create')}
+function editPattern(i){editor={...patterns[i],colors:[...patterns[i].colors]};renderEditor();showView('create')}
+function renderEditor(){if(!editor)return;$('editorHeading').textContent=editor.id?'Edit pattern':'New pattern';$('patternName').value=editor.name;$('patternSpeed').value=editor.speed;$('speedOut').textContent=editor.speed;$('patternDirection').value=editor.direction;$('patternGap').value=editor.gap;$('patternPause').value=editor.pause;$('patternOther').value=editor.other;$('movementDescription').textContent=movementInfo[editor.type]||'';$('movementGrid').innerHTML=movements.map(m=>`<button class="movement ${m===editor.type?'active':''}" onclick="chooseMovement('${m}')"><span class="mini" data-mini="${m}"></span>${title(m)}</button>`).join('');renderPalette();updateEditorPreview();hydratePreviews()}
+function readEditor(){if(!editor)return;editor.name=$('patternName').value;editor.speed=Number($('patternSpeed').value);editor.direction=$('patternDirection').value;editor.gap=Math.max(0,Number($('patternGap').value)||0);editor.pause=Math.max(0,Number($('patternPause').value)||0);editor.other=Math.max(0,Number($('patternOther').value)||0);updateEditorPreview()}
+function chooseMovement(m){readEditor();editor.type=m;renderEditor()}
+function renderPalette(){$('colorCount').textContent=`${editor.colors.length} color${editor.colors.length===1?'':'s'}`;$('paletteEditor').innerHTML=editor.colors.map((c,i)=>`<label class="color-edit" style="--c:${c}"><input type="color" value="${c}" onchange="setEditorColor(${i},this.value)">${editor.colors.length>1?`<button type="button" onclick="event.preventDefault();removeEditorColor(${i})">×</button>`:''}</label>`).join('')+`<button class="color-edit add-color" onclick="addEditorColor()" title="Add color">＋</button>`;$('editorPresets').innerHTML=presets.map(c=>`<button class="swatch" style="--c:${c}" onclick="addEditorColor('${c}')" aria-label="Add ${c}"></button>`).join('')}
+function setEditorColor(i,c){editor.colors[i]=c;renderPalette();updateEditorPreview()}
+function addEditorColor(c='#37d27d'){if(editor.colors.length>=128)return message('The controller supports up to 128 colors',true);editor.colors.push(c);renderPalette();updateEditorPreview()}
+function removeEditorColor(i){if(editor.colors.length<=1)return;editor.colors.splice(i,1);renderPalette();updateEditorPreview()}
+function updateEditorPreview(){$('previewName').textContent=editor.name||'Untitled pattern';$('editorSummary').innerHTML=`<strong>${title(editor.type)}</strong><br>${esc(movementInfo[editor.type])}<br>Speed ${editor.speed} · ${editor.direction==='R'?'Reverse':'Forward'} · ${editor.colors.length} color${editor.colors.length===1?'':'s'}`;buildPreview($('editorPreview'),40)}
+async function testEditor(){readEditor();await applyPattern({...editor,name:editor.name||'Unsaved pattern'})}
+async function saveEditor(){readEditor();if(!editor.name.trim())return message('Give the pattern a name first',true);if(editor.id==null){editor.id=Math.max(0,...patterns.map(p=>Number(p.id)||0))+1;patterns.push({...editor,colors:[...editor.colors]})}else{const i=patterns.findIndex(p=>p.id===editor.id);if(i>=0)patterns[i]={...editor,colors:[...editor.colors]};else patterns.push({...editor,colors:[...editor.colors]})}try{await persistPatterns();message('Pattern saved');renderPatterns();renderHome();showView('patterns')}catch(e){message(e.message,true)}}
+async function deletePattern(i){if(!confirm(`Delete “${patterns[i].name}”?`))return;const removed=patterns.splice(i,1)[0];try{await persistPatterns();renderPatterns();renderHome();message(`${removed.name} deleted`)}catch(e){patterns.splice(i,0,removed);message(e.message,true)}}
+async function persistPatterns(){await request('/api/patterns',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(patterns.map(serializePattern))})}
+
+function renderSettings(){if(!controller)return;const w=controller.wledSync||{};$('wledEnabled').checked=!!w.enabled;$('wledDestination').value=w.destination||'255.255.255.255';$('wledPixels').value=w.pixelCount||300;$('wledSource').innerHTML='<option value="-1">Auto (first active)</option>'+controller.zones.map((z,i)=>`<option value="${i}">${i+1}: ${esc(z.name)}</option>`).join('');$('wledSource').value=String(w.sourceZone??-1);$('wledStatus').textContent=`Status: ${w.status||'Disabled'}`;$('ssid').value=controller.wifi.ssid||'';$('zonesForm').innerHTML=controller.zones.map((z,i)=>`<div class="zone-config"><label class="check"><input type="checkbox" name="en${i}" ${z.enabled?'checked':''}> On</label><label class="field">Name<input name="name${i}" maxlength="24" value="${esc(z.name)}"></label><label class="field count">Fixtures<input name="cnt${i}" type="number" min="1" max="1000" value="${z.count}"></label><label class="field order">Order<select name="ord${i}">${orders.map(o=>`<option ${o===z.order?'selected':''}>${o}</option>`).join('')}</select></label></div>`).join('')}
+async function saveWled(e){e.preventDefault();try{const data=new URLSearchParams(new FormData($('wledForm')));if(!$('wledEnabled').checked)data.set('enabled','0');const text=await request('/api/wled-sync',{method:'POST',body:data});message(text);await loadAll()}catch(err){message(err.message,true)}}
+async function saveZones(e){e.preventDefault();try{message(await request('/api/zones',{method:'POST',body:new URLSearchParams(new FormData($('zonesForm')))}));$('connText').textContent='Rebooting…'}catch(err){message(err.message,true)}}
+async function saveNetwork(e){e.preventDefault();try{message(await request('/api/network',{method:'POST',body:new URLSearchParams(new FormData($('networkForm')))}));$('connText').textContent='Rebooting…'}catch(err){message(err.message,true)}}
+function renderDiagnostics(){if(!controller)return;$('statusBox').textContent=JSON.stringify(controller,null,2)}
+
+function title(s){return String(s||'').replace(/(^|[-_ ])(\w)/g,(_,a,b)=>(a?' ':'')+b.toUpperCase())}
+function buildPreview(el,count=32){if(!el)return;if(el.children.length!==count)el.innerHTML='<i class="led"></i>'.repeat(count)}
+function hydratePreviews(){document.querySelectorAll('[data-pattern-index]').forEach(el=>buildPreview(el,Math.min(40,Math.max(24,patterns[Number(el.dataset.patternIndex)]?.colors.length||24))));document.querySelectorAll('[data-mini]').forEach(el=>{if(!el.children.length)el.innerHTML='<i></i>'.repeat(10)});buildPreview($('livePreview'),40);buildPreview($('editorPreview'),40)}
+function mix(a,b,t){const x=hexRgb(a),y=hexRgb(b);return rgbHex(...x.map((v,i)=>Math.round(v+(y[i]-v)*t)))}
+function mod(n,m){return((n%m)+m)%m}
+function hash(i,t){let x=((i+1)*2654435761+(t+7)*1013904223)>>>0;x^=x>>>16;return x>>>0}
+function frame(p,n,t){const c=p?.colors?.length?p.colors:['#000000'],type=p?.type||'off',rev=p?.direction==='R'?-1:1,step=t*rev,out=Array(n).fill('#000000');if(type==='off')return out;
+  if(type==='stationary')return out.map((_,i)=>c[i%c.length]);
+  if(type==='march'||type==='river'){const group=type==='river'?Math.max(2,p.other||3):1;return out.map((_,i)=>c[mod(Math.floor(i/group)+step,c.length)])}
+  if(type==='blend'){return out.map((_,i)=>{const x=mod((i/n*c.length)+(t*.08*rev),c.length),a=Math.floor(x),b=(a+1)%c.length;return mix(c[a],c[b],x-a)})}
+  if(type==='fade'){const x=(t*.08)%c.length,a=Math.floor(x),b=(a+1)%c.length;return out.fill(mix(c[a],c[b],x-a))}
+  if(type==='chase'){const lit=Math.max(1,p.other||2),gap=Math.max(2,p.gap||4),period=lit+gap;return out.map((_,i)=>mod(i+step,period)<lit?c[mod(Math.floor((i+step)/period),c.length)]:'#000000')}
+  if(type==='split')return out.map((_,i)=>c[mod(Math.floor(Math.abs(i-(n-1)/2))+step,c.length)]);
+  if(type==='fill'||type==='takeover'){const head=((step%n)+n)%n,col=c[Math.floor(t/n)%c.length];return out.map((_,i)=>(type==='takeover'||i<=head)?col:'#000000')}
+  if(type==='shuffle')return out.map((_,i)=>c[hash(i,Math.floor(t/3))%c.length]);
+  if(type==='arcade'){const h=((step%n)+n)%n;out[h]=c[Math.floor(t/n)%c.length];out[(h-rev+n)%n]=mix(c[Math.floor(t/n)%c.length],'#000000',.65);return out}
+  if(type==='streak'||type==='bolt'){const h=((step%n)+n)%n,len=type==='bolt'?Math.min(8,c.length+2):4;for(let j=0;j<len;j++)out[(h-j*rev+n)%n]=mix(c[j%c.length],'#000000',j/len*.82);return out}
+  if(type==='lightning'||type==='storm'){const flash=(t%(type==='storm'?21:13))<2;return out.fill(flash?(type==='storm'?'#d9e8ff':c[t%c.length]):'#000000')}
+  if(type==='twinkle'||type==='sprinkle'){return out.map((_,i)=>{const h=hash(i,Math.floor(t/2)),chance=type==='twinkle'?5:8;return h%chance===0?c[h%c.length]:mix(c[h%c.length],'#000000',.9)})}
+  return out.map((_,i)=>c[mod(i+step,c.length)]);
 }
-async function allOff(){msg(await (await fetch('/api/off')).text())}
-async function fireworks(){msg(await (await fetch('/api/preset/fast-fireworks')).text())}
-async function saveZones(e){e.preventDefault();const p=new URLSearchParams(new FormData(document.getElementById('zones')));msg(await (await fetch('/api/zones',{method:'POST',body:p})).text())}
-async function saveNetwork(e){e.preventDefault();const p=new URLSearchParams(new FormData(document.getElementById('network')));msg(await (await fetch('/api/network',{method:'POST',body:p})).text())}
-load().catch(e=>msg('Error: '+e));
+function paint(el,p,t,mini=false){const colors=frame(p,el.children.length,t);[...el.children].forEach((led,i)=>{const color=colors[i]||'#000';led.style.background=color;if(!mini){led.style.setProperty('--c',color);led.classList.toggle('on',color!=='#000000'&&color!=='#000')}})}
+let tick=0;setInterval(()=>{tick++;document.querySelectorAll('[data-pattern-index]').forEach(el=>paint(el,patterns[Number(el.dataset.patternIndex)],tick));document.querySelectorAll('[data-mini]').forEach(el=>paint(el,{type:el.dataset.mini,colors:['#ff3030','#ffffff','#164cff'],speed:10,direction:'F',gap:3,other:2},tick,true));if(currentPattern)paint($('livePreview'),currentPattern,tick);if(editor)paint($('editorPreview'),editor,tick)},120);
+document.addEventListener('DOMContentLoaded',()=>{showView('home');hydratePreviews();loadAll()});
 </script>
 </body>
 </html>

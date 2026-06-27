@@ -71,6 +71,12 @@ Returns the saved-pattern JSON array from LittleFS.
 Validates and stores a URL-encoded JSON array. A fresh filesystem is seeded
 with `Fourth of July: Fast Fireworks`.
 
+### `POST /api/patterns`
+
+Accepts the same JSON array in the request body. The replacement web UI uses
+this route so larger palettes do not need to fit in a URL. The original GET
+route remains available for LeafFilter app compatibility.
+
 ## Wi-Fi setup
 
 ### `GET /scanNetworksRSSI`
@@ -89,8 +95,15 @@ The sample's own web UI additionally uses:
 ```text
 GET  /api/status
 GET  /api/color
+GET  /api/brightness?value=<1-255>
 GET  /api/off
 GET  /api/preset/fast-fireworks
+POST /api/patterns
 POST /api/zones
 POST /api/network
+POST /api/wled-sync
 ```
+
+`POST /api/wled-sync` accepts form fields `enabled`, `destination`,
+`pixelCount`, and `sourceZone`. A source of `-1` automatically uses the first
+zone in the active pattern. These settings are stored in NVS.

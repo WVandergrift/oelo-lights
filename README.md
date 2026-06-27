@@ -9,10 +9,12 @@ The sample firmware currently runs on an Unexpected Maker TinyS3 and provides:
 - six configurable UCS1903 outputs at 400 kbit/s;
 - Oelo's two-physical-pixels-per-fixture mapping;
 - persistent zone names, fixture counts, enable state, and color order;
-- a browser interface for configuration and testing;
+- a phone-first browser interface with animated pattern previews, daily controls,
+  pattern editing, and advanced installation settings;
 - compatibility with the LeafFilter app's offline Local AP Control mode;
 - controller-hosted offline pattern profiles;
 - non-blocking approximations of all 17 movement types exposed by the app;
+- optional realtime DDP broadcast of rendered frames to WLED controllers;
 - the recovered **Fourth of July: Fast Fireworks** profile.
 
 ## Current status
@@ -54,8 +56,9 @@ After flashing, connect to the open `OELO_1-23.0` access point and open:
 http://172.24.1.1
 ```
 
-Select **Fast Fireworks—all zones** to run the recovered holiday palette, or
-use the LeafFilter app workflow in [docs/leaf-filter-app.md](docs/leaf-filter-app.md).
+Select one or more zones and press **Play** on a saved pattern, or use the
+LeafFilter app workflow in [docs/leaf-filter-app.md](docs/leaf-filter-app.md).
+WLED receiver setup is covered in [docs/wled-sync.md](docs/wled-sync.md).
 
 ## First electrical test
 
@@ -77,6 +80,7 @@ the same. Never power the lights from the TinyS3.
 - [Local controller HTTP API](docs/local-api.md)
 - [LeafFilter app offline workflow](docs/leaf-filter-app.md)
 - [Patterns and Fast Fireworks](docs/patterns.md)
+- [WLED realtime synchronization](docs/wled-sync.md)
 - [Firmware update path](docs/firmware-update-path.md)
 - [Research method and confidence](docs/research.md)
 - [Sample firmware details](firmware/tinys3/README.md)

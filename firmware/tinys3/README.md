@@ -65,11 +65,13 @@ app. Connect a phone or computer to that network and open:
 http://172.24.1.1
 ```
 
-The web page provides low-brightness color tests, per-zone fixture counts,
-zone enable/name/color-order settings, and home Wi-Fi provisioning. Settings
-are stored in ESP32 NVS and survive power loss. When home Wi-Fi is configured,
-the same page is available at the displayed LAN address and, where mDNS is
-supported, `http://leaflights.local`.
+The web page provides a phone-first daily-control screen, animated saved-pattern
+previews, a pattern editor, multi-zone selection, per-zone hardware settings,
+home Wi-Fi provisioning, diagnostics, and optional WLED realtime sync. Settings
+are stored in ESP32 NVS and survive power loss. Saved patterns live in
+LittleFS. When home Wi-Fi is configured, the same page is available at the
+displayed LAN address and, where mDNS is supported,
+`http://leaflights.local`.
 
 The following original local-controller endpoints are implemented for app
 compatibility:
@@ -95,6 +97,29 @@ offline app: `stationary`, `arcade`/`pacman`, `blend`, `bolt`, `chase`, `fade`,
 the UCS1903 transport, fixture pairing, palette, direction, and speed inputs
 match the recovered controller contract, while exact visual parity remains a
 future reverse-engineering task for each movement engine.
+
+## WLED realtime sync
+
+The controller can broadcast the actual rendered RGB frames to WLED devices
+using DDP on UDP port 4048. This is deliberately different from WLED's effect
+state notifier: Oelo movement engines and WLED effect IDs do not have a
+one-to-one mapping, so sending pixels preserves the Oelo colors and motion.
+
+Configure home Wi-Fi first, then open **Settings → WLED realtime sync**:
+
+- use `255.255.255.255` to broadcast to receivers on the local network, or a
+  specific WLED IP address for unicast;
+- set the virtual pixel count to the receiving strip length;
+- use **Auto** to copy the first zone in the active pattern, or choose a fixed
+  source zone;
+- enable **Force max brightness** on each WLED receiver under its realtime/sync
+  settings because the outgoing RGB frame already includes TinyS3 brightness.
+
+Static colors are refreshed every 750 ms so WLED remains in realtime mode.
+Animated patterns send each rendered frame, capped at roughly 33 frames per
+second. Disabling sync stops the stream; WLED resumes its previous state after
+its configured realtime timeout. See
+[../../docs/wled-sync.md](../../docs/wled-sync.md) for limitations.
 
 ## Serial use
 

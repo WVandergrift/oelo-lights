@@ -7,6 +7,7 @@
 #include <Preferences.h>
 #include <WebServer.h>
 #include <WiFi.h>
+#include <WiFiUdp.h>
 
 #include "web_ui.h"
 
@@ -70,6 +71,13 @@ struct PatternState {
   uint8_t phase = 0;
 };
 
+struct WledSyncConfig {
+  bool enabled = false;
+  String destination = "255.255.255.255";
+  uint16_t pixelCount = 300;
+  int8_t sourceZone = -1;
+};
+
 CRGB zonePixels[kZoneCount][kMaxPhysicalPixels];
 ZoneConfig zones[kZoneCount];
 bool zoneRegistered[kZoneCount] = {};
@@ -78,10 +86,17 @@ PatternState activePattern;
 
 Preferences preferences;
 WebServer server(80);
+WiFiUDP ddpUdp;
 String wifiSsid;
 String wifiPassword;
 String chipId;
 uint32_t restartAt = 0;
+WledSyncConfig wledSync;
+uint8_t ddpSequence = 1;
+uint32_t lastDdpFrameAt = 0;
+String lastDdpStatus = "Disabled";
+
+void sendDdpFrame(bool force = false);
 
 const char kSeedPatterns[] PROGMEM = R"JSON([
   {
@@ -112,6 +127,14 @@ void loadConfiguration() {
   wifiSsid = preferences.getString("ssid", "");
   wifiPassword = preferences.getString("password", "");
   brightness = preferences.getUChar("brightness", kDefaultBrightness);
+  wledSync.enabled = preferences.getBool("ddpEnabled", false);
+  wledSync.destination =
+      preferences.getString("ddpDest", "255.255.255.255");
+  wledSync.pixelCount = constrain(
+      preferences.getUShort("ddpPixels", 300), 1, kMaxLogicalLeds);
+  wledSync.sourceZone = constrain(
+      static_cast<int>(preferences.getChar("ddpSource", -1)), -1,
+      static_cast<int>(kZoneCount - 1));
 
   for (uint8_t i = 0; i < kZoneCount; ++i) {
     const String countKey = preferenceKey("cnt", i);
@@ -209,6 +232,7 @@ void allOff() {
     fillZone(zone, CRGB::Black);
   }
   FastLED.show();
+  sendDdpFrame(true);
 }
 
 void addCorsHeaders() {
@@ -327,6 +351,104 @@ uint8_t selectedZoneMask(const String& selectedZones) {
   return mask;
 }
 
+int8_t ddpSourceZone() {
+  if (wledSync.sourceZone >= 0 && wledSync.sourceZone < kZoneCount &&
+      zoneRegistered[wledSync.sourceZone]) {
+    return wledSync.sourceZone;
+  }
+  for (uint8_t zone = 0; zone < kZoneCount; ++zone) {
+    if ((activePattern.zoneMask & (1U << zone)) && zoneRegistered[zone]) {
+      return zone;
+    }
+  }
+  for (uint8_t zone = 0; zone < kZoneCount; ++zone) {
+    if (zoneRegistered[zone]) return zone;
+  }
+  return -1;
+}
+
+bool resolveDdpDestination(IPAddress& address) {
+  if (address.fromString(wledSync.destination)) return true;
+  return WiFi.hostByName(wledSync.destination.c_str(), address) == 1;
+}
+
+void sendDdpFrame(bool force) {
+  if (!wledSync.enabled) {
+    lastDdpStatus = "Disabled";
+    return;
+  }
+  const uint32_t now = millis();
+  if (!force && now - lastDdpFrameAt < 30) return;
+
+  IPAddress destination;
+  if (!resolveDdpDestination(destination)) {
+    lastDdpStatus = "Invalid destination";
+    return;
+  }
+  const int8_t source = ddpSourceZone();
+  if (source < 0) {
+    lastDdpStatus = "No enabled source zone";
+    return;
+  }
+
+  constexpr uint16_t kDdpPort = 4048;
+  constexpr uint16_t kDdpChannelsPerPacket = 1440;
+  constexpr uint16_t kDdpPixelsPerPacket = kDdpChannelsPerPacket / 3;
+  const uint16_t outputCount =
+      constrain(wledSync.pixelCount, 1, kMaxLogicalLeds);
+  const uint16_t sourceCount = max<uint16_t>(zones[source].count, 1);
+
+  for (uint16_t firstPixel = 0; firstPixel < outputCount;
+       firstPixel += kDdpPixelsPerPacket) {
+    const uint16_t packetPixels =
+        min<uint16_t>(kDdpPixelsPerPacket, outputCount - firstPixel);
+    const uint16_t dataLength = packetPixels * 3;
+    const uint32_t channelOffset = static_cast<uint32_t>(firstPixel) * 3;
+    const bool push = firstPixel + packetPixels >= outputCount;
+
+    if (!ddpUdp.beginPacket(destination, kDdpPort)) {
+      lastDdpStatus = "UDP send failed";
+      return;
+    }
+    ddpUdp.write(static_cast<uint8_t>(0x40 | (push ? 0x01 : 0x00)));
+    ddpUdp.write(ddpSequence++ & 0x0f);
+    if ((ddpSequence & 0x0f) == 0) ++ddpSequence;
+    ddpUdp.write(static_cast<uint8_t>(0x0b));  // RGB, 8 bits/channel.
+    ddpUdp.write(static_cast<uint8_t>(0x01));  // Default display output.
+    ddpUdp.write(static_cast<uint8_t>(channelOffset >> 24));
+    ddpUdp.write(static_cast<uint8_t>(channelOffset >> 16));
+    ddpUdp.write(static_cast<uint8_t>(channelOffset >> 8));
+    ddpUdp.write(static_cast<uint8_t>(channelOffset));
+    ddpUdp.write(static_cast<uint8_t>(dataLength >> 8));
+    ddpUdp.write(static_cast<uint8_t>(dataLength));
+
+    for (uint16_t pixel = firstPixel;
+         pixel < firstPixel + packetPixels; ++pixel) {
+      const uint16_t sourceFixture =
+          min<uint16_t>((static_cast<uint32_t>(pixel) * sourceCount) /
+                            outputCount,
+                        sourceCount - 1);
+      const CRGB& color =
+          zonePixels[source][sourceFixture * kPhysicalPixelsPerFixture];
+      ddpUdp.write(scale8_video(color.r, brightness));
+      ddpUdp.write(scale8_video(color.g, brightness));
+      ddpUdp.write(scale8_video(color.b, brightness));
+    }
+    if (!ddpUdp.endPacket()) {
+      lastDdpStatus = "UDP send failed";
+      return;
+    }
+  }
+  lastDdpFrameAt = now;
+  lastDdpStatus = String("Streaming ") + outputCount + " pixels";
+}
+
+void serviceDdpSync() {
+  if (wledSync.enabled && millis() - lastDdpFrameAt >= 750) {
+    sendDdpFrame(true);
+  }
+}
+
 PatternKind patternKindFromName(String type) {
   type.toLowerCase();
   if (type == "arcade" || type == "pacman") return PatternKind::Arcade;
@@ -351,6 +473,9 @@ PatternKind patternKindFromName(String type) {
 
 uint16_t patternStepInterval() {
   const uint8_t speed = constrain(activePattern.speed, 1, 20);
+  if (activePattern.kind == PatternKind::March) {
+    return 2100 - (speed * 100);  // Recovered vendor scale: speed 20 = 100 ms.
+  }
   if (activePattern.kind == PatternKind::Twinkle ||
       activePattern.kind == PatternKind::Sprinkle) {
     return 270 - (speed * 11);  // 259 ms at 1, 50 ms at 20.
@@ -585,6 +710,7 @@ void startPattern(const String& requestedType, uint8_t zoneMask,
     activePattern.running = true;
   }
   FastLED.show();
+  sendDdpFrame(true);
 }
 
 void updateActivePattern() {
@@ -644,7 +770,10 @@ void updateActivePattern() {
     activePattern.step++;
     activePattern.lastStepAt = now;
   }
-  if (changed) FastLED.show();
+  if (changed) {
+    FastLED.show();
+    sendDdpFrame();
+  }
 }
 
 void handleSetPattern() {
@@ -690,6 +819,12 @@ void sendStatusJson() {
   wifi["lanIp"] = WiFi.status() == WL_CONNECTED
                         ? WiFi.localIP().toString()
                         : String();
+  JsonObject sync = document["wledSync"].to<JsonObject>();
+  sync["enabled"] = wledSync.enabled;
+  sync["destination"] = wledSync.destination;
+  sync["pixelCount"] = wledSync.pixelCount;
+  sync["sourceZone"] = wledSync.sourceZone;
+  sync["status"] = lastDdpStatus;
   JsonArray outputZones = document["zones"].to<JsonArray>();
   for (uint8_t i = 0; i < kZoneCount; ++i) {
     JsonObject zone = outputZones.add<JsonObject>();
@@ -719,11 +854,22 @@ void handleApiColor() {
   const CRGB color(constrain(server.arg("r").toInt(), 0, 255),
                    constrain(server.arg("g").toInt(), 0, 255),
                    constrain(server.arg("b").toInt(), 0, 255));
-  activePattern.running = false;
-  activePattern.type = "stationary";
-  fillZone(zone, color);
-  FastLED.show();
+  startPattern("stationary", 1U << zone, &color, 1, 10, 0, false, 0, 0);
   sendText(200, String("Zone ") + String(zone + 1) + " updated");
+}
+
+void handleBrightness() {
+  const int requested = server.arg("value").toInt();
+  if (requested < 1 || requested > 255) {
+    sendText(400, "Brightness must be between 1 and 255");
+    return;
+  }
+  brightness = requested;
+  FastLED.setBrightness(brightness);
+  preferences.putUChar("brightness", brightness);
+  FastLED.show();
+  sendDdpFrame(true);
+  sendText(200, "Brightness updated");
 }
 
 void handleWebZones() {
@@ -755,6 +901,45 @@ void handleWebNetwork() {
   saveNetwork(server.arg("ssid"), server.arg("password"));
   sendText(200, "Wi-Fi saved; rebooting in 1.5 seconds");
   scheduleRestart();
+}
+
+void handleWledSyncConfiguration() {
+  const String enabled = server.arg("enabled");
+  wledSync.enabled = enabled == "1" || enabled == "true" || enabled == "on";
+  String destination = server.arg("destination");
+  destination.trim();
+  if (destination.isEmpty()) destination = "255.255.255.255";
+  if (destination.length() > 64 || destination.indexOf("://") >= 0 ||
+      destination.indexOf(' ') >= 0) {
+    sendText(400, "Enter an IP address or hostname without http://");
+    return;
+  }
+  const int pixels = server.arg("pixelCount").toInt();
+  if (pixels < 1 || pixels > kMaxLogicalLeds) {
+    sendText(400, "WLED pixel count must be between 1 and 1000");
+    return;
+  }
+  const int source = server.arg("sourceZone").toInt();
+  if (source < -1 || source >= kZoneCount) {
+    sendText(400, "Invalid WLED source zone");
+    return;
+  }
+
+  wledSync.destination = destination;
+  wledSync.pixelCount = pixels;
+  wledSync.sourceZone = source;
+  preferences.putBool("ddpEnabled", wledSync.enabled);
+  preferences.putString("ddpDest", wledSync.destination);
+  preferences.putUShort("ddpPixels", wledSync.pixelCount);
+  preferences.putChar("ddpSource", wledSync.sourceZone);
+
+  if (wledSync.enabled) {
+    sendDdpFrame(true);
+  } else {
+    lastDdpStatus = "Disabled";
+  }
+  sendText(200, wledSync.enabled ? "WLED realtime sync enabled"
+                                 : "WLED realtime sync disabled");
 }
 
 void handleScanNetworks() {
@@ -793,12 +978,7 @@ void handleGetPatterns() {
   file.close();
 }
 
-void handleSavePatterns() {
-  if (!server.hasArg("json")) {
-    sendText(400, "Missing json parameter");
-    return;
-  }
-  const String json = server.arg("json");
+void savePatternsJson(const String& json) {
   JsonDocument document;
   const DeserializationError error = deserializeJson(document, json);
   if (error || !document.is<JsonArray>()) {
@@ -815,6 +995,22 @@ void handleSavePatterns() {
   sendText(200, "Patterns saved");
 }
 
+void handleSavePatterns() {
+  if (!server.hasArg("json")) {
+    sendText(400, "Missing json parameter");
+    return;
+  }
+  savePatternsJson(server.arg("json"));
+}
+
+void handleSavePatternsBody() {
+  if (!server.hasArg("plain")) {
+    sendText(400, "Missing JSON body");
+    return;
+  }
+  savePatternsJson(server.arg("plain"));
+}
+
 void configureWebServer() {
   server.on("/", HTTP_GET, []() {
     addCorsHeaders();
@@ -825,6 +1021,7 @@ void configureWebServer() {
   server.on("/setPattern", HTTP_GET, handleSetPattern);
   server.on("/getPatterns", HTTP_GET, handleGetPatterns);
   server.on("/savePatterns", HTTP_GET, handleSavePatterns);
+  server.on("/api/patterns", HTTP_POST, handleSavePatternsBody);
   server.on("/scanNetworksRSSI", HTTP_GET, handleScanNetworks);
   server.on("/saveNetwork", HTTP_GET, []() {
     saveNetwork(server.arg("ssid"), server.arg("pw"));
@@ -833,6 +1030,7 @@ void configureWebServer() {
   });
   server.on("/api/status", HTTP_GET, sendStatusJson);
   server.on("/api/color", HTTP_GET, handleApiColor);
+  server.on("/api/brightness", HTTP_GET, handleBrightness);
   server.on("/api/off", HTTP_GET, []() {
     allOff();
     sendText(200, "All zones off");
@@ -847,6 +1045,7 @@ void configureWebServer() {
   });
   server.on("/api/zones", HTTP_POST, handleWebZones);
   server.on("/api/network", HTTP_POST, handleWebNetwork);
+  server.on("/api/wled-sync", HTTP_POST, handleWledSyncConfiguration);
   server.onNotFound([]() {
     if (server.method() == HTTP_OPTIONS) {
       sendText(204, "");
@@ -948,6 +1147,7 @@ void setup() {
 void loop() {
   server.handleClient();
   updateActivePattern();
+  serviceDdpSync();
   if (Serial.available()) {
     handleSerialCommand(Serial.readStringUntil('\n'));
   }
