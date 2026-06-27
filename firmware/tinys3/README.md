@@ -88,15 +88,19 @@ GET /saveNetwork?ssid=...&pw=...
 
 Saved patterns are persisted in LittleFS and exposed to the app's offline
 "Your Patterns" screen. A fresh filesystem is seeded with the recovered
-`Fourth of July: Fast Fireworks` preset.
+`Fourth of July: Fast Fireworks` preset plus nine original Independence Day
+presets. Firmware upgrades merge newly bundled presets without overwriting
+saved user patterns.
 
 The non-blocking demo engine accepts every movement type exposed by the
 offline app: `stationary`, `arcade`/`pacman`, `blend`, `bolt`, `chase`, `fade`,
 `fill`, `lightning`, `march`, `river`, `shuffle`, `split`, `sprinkle`, `streak`,
-`storm`, `takeover`, `twinkle`, and `off`. These are compatible approximations;
-the UCS1903 transport, fixture pairing, palette, direction, and speed inputs
-match the recovered controller contract, while exact visual parity remains a
-future reverse-engineering task for each movement engine.
+`storm`, `takeover`, `twinkle`, and `off`. It also adds a custom `fireworks`
+engine with independent expanding bursts on each zone. The vendor movements
+are compatible approximations; the UCS1903 transport, fixture pairing,
+palette, direction, and speed inputs match the recovered controller contract,
+while exact visual parity remains a future reverse-engineering task for each
+movement engine.
 
 ## WLED realtime sync
 

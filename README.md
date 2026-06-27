@@ -12,14 +12,17 @@ The sample firmware currently runs on an Unexpected Maker TinyS3 and provides:
 - a phone-first browser interface with animated pattern previews, daily controls,
   pattern editing, and advanced installation settings;
 - compatibility with the LeafFilter app's offline Local AP Control mode;
-- controller-hosted offline pattern profiles;
-- non-blocking approximations of all 17 movement types exposed by the app;
+- controller-hosted offline pattern profiles and a ten-preset Independence Day
+  collection;
+- non-blocking approximations of all 17 movement types exposed by the app plus
+  a custom multi-burst fireworks engine;
 - optional realtime DDP broadcast of rendered frames to WLED controllers;
 - password-protected browser firmware updates using the ESP32's inactive OTA
   application slot;
 - GitHub release discovery, release-note review, selected-version installation,
   and opt-in automatic stable updates;
-- the recovered **Fourth of July: Fast Fireworks** profile.
+- the recovered **Fourth of July: Fast Fireworks** profile and nine original
+  red, white, and blue presets.
 
 ## Current status
 

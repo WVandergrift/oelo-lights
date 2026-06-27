@@ -24,9 +24,10 @@ constexpr uint16_t kMaxPhysicalPixels =
     kMaxLogicalLeds * kPhysicalPixelsPerFixture;
 constexpr uint8_t kDefaultBrightness = 32;
 constexpr uint8_t kMaxPatternColors = 128;
+constexpr uint16_t kPatternLibraryVersion = 1;
 constexpr char kAccessPointName[] = "OELO_1-23.0";
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "0.4.1-dev"
+#define FIRMWARE_VERSION "0.5.0-dev"
 #endif
 constexpr char kFirmwareVersion[] = FIRMWARE_VERSION;
 constexpr char kOtaUsername[] = "leaflights";
@@ -54,6 +55,7 @@ enum class PatternKind : uint8_t {
   Chase,
   Fade,
   Fill,
+  Fireworks,
   Lightning,
   March,
   River,
@@ -93,6 +95,14 @@ struct WledSyncConfig {
   int8_t sourceZone = -1;
 };
 
+struct FireworkBurst {
+  bool active = false;
+  uint16_t center = 0;
+  uint8_t radius = 0;
+  uint8_t paletteIndex = 0;
+  uint32_t nextLaunchAt = 0;
+};
+
 struct GithubRelease {
   String tag;
   String name;
@@ -109,6 +119,7 @@ ZoneConfig zones[kZoneCount];
 bool zoneRegistered[kZoneCount] = {};
 uint8_t brightness = kDefaultBrightness;
 PatternState activePattern;
+FireworkBurst fireworkBursts[kZoneCount];
 
 Preferences preferences;
 WebServer server(80);
@@ -143,6 +154,114 @@ const char kSeedPatterns[] PROGMEM = R"JSON([
     "pause": 0,
     "other": 0,
     "colors": "255,255,255,0,0,255,0,0,255,255,255,255,255,0,0,255,0,0,"
+  },
+  {
+    "id": 2,
+    "name": "Liberty March",
+    "type": "march",
+    "num_colors": 24,
+    "direction": "F",
+    "speed": 18,
+    "gap": 0,
+    "pause": 0,
+    "other": 0,
+    "colors": "255,18,30,230,0,18,176,0,14,96,0,8,0,0,0,0,0,0,255,255,255,255,255,255,232,236,255,190,202,230,0,0,0,0,0,0,24,64,255,10,38,225,4,20,176,0,10,108,0,0,0,0,0,0,255,255,255,255,255,255,255,18,30,230,0,18,24,64,255,10,38,225,"
+  },
+  {
+    "id": 3,
+    "name": "Rocket's Red Glare",
+    "type": "bolt",
+    "num_colors": 8,
+    "direction": "F",
+    "speed": 20,
+    "gap": 0,
+    "pause": 0,
+    "other": 0,
+    "colors": "255,255,255,255,232,178,255,142,38,255,28,24,205,0,18,118,0,15,25,52,255,4,15,126,"
+  },
+  {
+    "id": 4,
+    "name": "Fifty Stars",
+    "type": "sprinkle",
+    "num_colors": 10,
+    "direction": "R",
+    "speed": 14,
+    "gap": 0,
+    "pause": 0,
+    "other": 0,
+    "colors": "255,255,255,255,255,255,218,232,255,255,255,255,34,82,255,18,48,220,6,18,130,255,28,34,210,0,22,255,255,255,"
+  },
+  {
+    "id": 5,
+    "name": "Freedom River",
+    "type": "river",
+    "num_colors": 9,
+    "direction": "R",
+    "speed": 15,
+    "gap": 0,
+    "pause": 0,
+    "other": 4,
+    "colors": "255,20,32,178,0,18,255,255,255,220,232,255,255,255,255,30,72,255,8,34,205,2,12,112,255,255,255,"
+  },
+  {
+    "id": 6,
+    "name": "Grand Finale Fireworks",
+    "type": "fireworks",
+    "num_colors": 9,
+    "direction": "F",
+    "speed": 19,
+    "gap": 0,
+    "pause": 0,
+    "other": 0,
+    "colors": "255,255,255,255,255,255,255,220,155,255,28,32,220,0,20,255,255,255,35,75,255,8,26,200,255,255,255,"
+  },
+  {
+    "id": 7,
+    "name": "American Wave",
+    "type": "blend",
+    "num_colors": 12,
+    "direction": "F",
+    "speed": 13,
+    "gap": 0,
+    "pause": 0,
+    "other": 0,
+    "colors": "118,0,14,205,0,22,255,28,36,255,160,150,255,255,255,220,235,255,112,160,255,30,82,255,8,34,205,2,12,112,30,82,255,220,235,255,"
+  },
+  {
+    "id": 8,
+    "name": "Stars & Stripes Chase",
+    "type": "chase",
+    "num_colors": 6,
+    "direction": "F",
+    "speed": 17,
+    "gap": 3,
+    "pause": 0,
+    "other": 5,
+    "colors": "255,22,34,214,0,22,255,255,255,230,238,255,28,68,255,6,24,178,"
+  },
+  {
+    "id": 9,
+    "name": "United We Split",
+    "type": "split",
+    "num_colors": 11,
+    "direction": "F",
+    "speed": 16,
+    "gap": 0,
+    "pause": 0,
+    "other": 0,
+    "colors": "255,20,32,190,0,20,80,0,10,0,0,0,255,255,255,225,235,255,0,0,0,5,20,120,18,52,225,35,80,255,255,255,255,"
+  },
+  {
+    "id": 10,
+    "name": "Dawn's Early Light",
+    "type": "fade",
+    "num_colors": 8,
+    "direction": "F",
+    "speed": 6,
+    "gap": 0,
+    "pause": 0,
+    "other": 0,
+    "colors": "1,8,60,8,30,145,30,78,255,198,220,255,255,248,225,255,142,116,235,24,34,125,0,16,"
   }
 ])JSON";
 
@@ -741,6 +860,7 @@ PatternKind patternKindFromName(String type) {
   if (type == "chase") return PatternKind::Chase;
   if (type == "fade") return PatternKind::Fade;
   if (type == "fill") return PatternKind::Fill;
+  if (type == "fireworks") return PatternKind::Fireworks;
   if (type == "lightning") return PatternKind::Lightning;
   if (type == "march") return PatternKind::March;
   if (type == "river") return PatternKind::River;
@@ -938,6 +1058,56 @@ void renderSparkles(bool twinkle) {
   }
 }
 
+void renderFireworks(uint32_t now, bool advance) {
+  fadePatternZones(12);
+  if (!advance) return;
+
+  for (uint8_t zone = 0; zone < kZoneCount; ++zone) {
+    if (!(activePattern.zoneMask & (1U << zone))) continue;
+    FireworkBurst& burst = fireworkBursts[zone];
+    const uint16_t count = zones[zone].count;
+    if (!burst.active) {
+      if (static_cast<int32_t>(now - burst.nextLaunchAt) < 0) continue;
+      burst.active = true;
+      burst.center = random(count);
+      burst.radius = 0;
+      burst.paletteIndex = random(activePattern.colorCount);
+    }
+
+    const uint8_t maximumRadius =
+        min<uint16_t>(18, max<uint16_t>(count / 10, 5));
+    const uint8_t intensity =
+        255 - (burst.radius * 190U / maximumRadius);
+    CRGB spark = patternColor(burst.paletteIndex);
+    spark.nscale8_video(intensity);
+    CRGB hotSpark = blend(spark, CRGB::White, burst.radius < 2 ? 180 : 35);
+
+    auto place = [&](int32_t fixture, const CRGB& color) {
+      if (fixture >= 0 && fixture < count) {
+        setLogicalFixture(zone, fixture, color);
+      }
+    };
+    if (burst.radius == 0) {
+      place(burst.center, hotSpark);
+    } else {
+      place(static_cast<int32_t>(burst.center) - burst.radius, hotSpark);
+      place(static_cast<int32_t>(burst.center) + burst.radius, hotSpark);
+
+      CRGB ember = spark;
+      ember.nscale8_video(150);
+      const uint8_t innerRadius = max<uint8_t>(1, burst.radius / 2);
+      place(static_cast<int32_t>(burst.center) - innerRadius, ember);
+      place(static_cast<int32_t>(burst.center) + innerRadius, ember);
+      if ((burst.radius & 1U) == 0) place(burst.center, ember);
+    }
+
+    if (++burst.radius > maximumRadius) {
+      burst.active = false;
+      burst.nextLaunchAt = now + random(180, 850);
+    }
+  }
+}
+
 bool renderWeather(uint32_t now, bool storm) {
   if (static_cast<int32_t>(now - activePattern.nextEventAt) < 0) return false;
   if (activePattern.phase == 0) {
@@ -979,6 +1149,10 @@ void startPattern(const String& requestedType, uint8_t zoneMask,
   activePattern.lastFrameAt = 0;
   activePattern.lastStepAt = millis();
   activePattern.nextEventAt = millis();
+  for (uint8_t zone = 0; zone < kZoneCount; ++zone) {
+    fireworkBursts[zone] = FireworkBurst();
+    fireworkBursts[zone].nextLaunchAt = millis() + zone * 135UL;
+  }
 
   if (activePattern.kind == PatternKind::Off) {
     clearPatternZones();
@@ -1021,6 +1195,8 @@ void updateActivePattern() {
       renderBlend(now); changed = true; break;
     case PatternKind::Fill:
       if (stepDue) { renderFill(false); changed = true; } break;
+    case PatternKind::Fireworks:
+      renderFireworks(now, stepDue); changed = true; break;
     case PatternKind::Lightning:
       changed = renderWeather(now, false); break;
     case PatternKind::March:
@@ -1419,8 +1595,86 @@ void initializePatternStorage() {
     if (file) {
       file.print(kSeedPatterns);
       file.close();
+      preferences.putUShort("patternLibrary", kPatternLibraryVersion);
     }
+    return;
   }
+
+  if (preferences.getUShort("patternLibrary", 0) >=
+      kPatternLibraryVersion) {
+    return;
+  }
+
+  File file = LittleFS.open("/patterns.json", "r");
+  JsonDocument savedDocument;
+  const DeserializationError savedError = deserializeJson(savedDocument, file);
+  file.close();
+  if (savedError || !savedDocument.is<JsonArray>()) {
+    Serial.printf("Unable to merge built-in patterns: %s\n",
+                  savedError.c_str());
+    return;
+  }
+
+  JsonDocument libraryDocument;
+  const DeserializationError libraryError =
+      deserializeJson(libraryDocument, kSeedPatterns);
+  if (libraryError || !libraryDocument.is<JsonArray>()) {
+    Serial.printf("Built-in pattern library is invalid: %s\n",
+                  libraryError.c_str());
+    return;
+  }
+
+  JsonArray savedPatterns = savedDocument.as<JsonArray>();
+  uint32_t nextId = 0;
+  for (JsonObjectConst pattern : savedPatterns) {
+    nextId = max(nextId, pattern["id"] | 0U);
+  }
+
+  bool changed = false;
+  for (JsonObjectConst builtIn : libraryDocument.as<JsonArrayConst>()) {
+    const String name = builtIn["name"] | "";
+    bool exists = false;
+    for (JsonObjectConst saved : savedPatterns) {
+      if (name == String(saved["name"] | "")) {
+        exists = true;
+        break;
+      }
+    }
+    if (exists) continue;
+
+    JsonObject added = savedPatterns.add<JsonObject>();
+    added.set(builtIn);
+    added["id"] = ++nextId;
+    changed = true;
+  }
+
+  if (changed) {
+    File temporary = LittleFS.open("/patterns.tmp", "w");
+    if (!temporary || serializeJson(savedDocument, temporary) == 0) {
+      if (temporary) temporary.close();
+      LittleFS.remove("/patterns.tmp");
+      Serial.println("Unable to write merged built-in patterns");
+      return;
+    }
+    temporary.close();
+
+    LittleFS.remove("/patterns.backup");
+    if (!LittleFS.rename("/patterns.json", "/patterns.backup")) {
+      LittleFS.remove("/patterns.tmp");
+      Serial.println("Unable to back up saved patterns");
+      return;
+    }
+    if (!LittleFS.rename("/patterns.tmp", "/patterns.json")) {
+      LittleFS.remove("/patterns.json");
+      LittleFS.rename("/patterns.backup", "/patterns.json");
+      LittleFS.remove("/patterns.tmp");
+      Serial.println("Unable to activate merged built-in patterns");
+      return;
+    }
+    LittleFS.remove("/patterns.backup");
+  }
+
+  preferences.putUShort("patternLibrary", kPatternLibraryVersion);
 }
 
 void handleGetPatterns() {

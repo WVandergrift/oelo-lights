@@ -53,7 +53,7 @@ Supported movement names:
 
 ```text
 stationary, arcade, pacman, blend, bolt, chase, fade, fill,
-lightning, march, river, shuffle, split, sprinkle, streak,
+fireworks, lightning, march, river, shuffle, split, sprinkle, streak,
 storm, takeover, twinkle, off
 ```
 
@@ -68,8 +68,10 @@ Returns the saved-pattern JSON array from LittleFS.
 
 ### `GET /savePatterns?json=...`
 
-Validates and stores a URL-encoded JSON array. A fresh filesystem is seeded
-with `Fourth of July: Fast Fireworks`.
+Validates and stores a URL-encoded JSON array. A fresh filesystem receives the
+built-in Independence Day collection, including the recovered
+`Fourth of July: Fast Fireworks` profile. Versioned firmware upgrades merge
+missing built-ins by name and preserve the existing array.
 
 ### `POST /api/patterns`
 

@@ -19,6 +19,11 @@ engines preserve the app contract—palette, speed, direction, gap, pause,
 `other`, selected zones, and paired fixtures—but exact vendor animation parity
 has not yet been established for every effect.
 
+The replacement firmware also provides `fireworks`, an original engine that
+launches independent, palette-colored expanding bursts on every selected zone.
+Because it renders through the normal pixel pipeline, its output is also sent
+to WLED receivers when realtime sync is enabled.
+
 ## Fourth of July: Fast Fireworks
 
 The global Oelo catalog contained an exact likely match for the previously used
@@ -51,6 +56,25 @@ The source definition is preserved in
 The sample firmware seeds this profile into LittleFS and exposes it through
 `/getPatterns`, so it appears in the offline app's **Your Patterns** list. The
 web interface can start the same configuration with one button.
+
+## Independence Day collection
+
+Fresh controllers receive ten editable presets. Existing controllers merge any
+missing preset once when the built-in library version changes; user-created and
+edited profiles are not overwritten.
+
+| Preset | Movement | Character |
+|---|---|---|
+| Fourth of July: Fast Fireworks | Twinkle | Recovered Oelo palette and settings |
+| Liberty March | March | Fast, detailed red-white-blue bands |
+| Rocket's Red Glare | Bolt | White-hot head with gold, red, and blue tail |
+| Fifty Stars | Sprinkle | Sparse white and blue sparks with red accents |
+| Freedom River | River | Wide flowing patriotic color bands |
+| Grand Finale Fireworks | Fireworks | Staggered expanding bursts per zone |
+| American Wave | Blend | Smooth navy-to-white-to-crimson gradient |
+| Stars & Stripes Chase | Chase | Color blocks separated by dark gaps |
+| United We Split | Split | Symmetric motion radiating from the center |
+| Dawn's Early Light | Fade | Slow whole-house sunrise through patriotic tones |
 
 ## Saved-profile behavior
 
