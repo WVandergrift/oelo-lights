@@ -26,7 +26,7 @@ constexpr uint8_t kDefaultBrightness = 32;
 constexpr uint8_t kMaxPatternColors = 128;
 constexpr char kAccessPointName[] = "OELO_1-23.0";
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "0.4.0-dev"
+#define FIRMWARE_VERSION "0.4.1-dev"
 #endif
 constexpr char kFirmwareVersion[] = FIRMWARE_VERSION;
 constexpr char kOtaUsername[] = "leaflights";

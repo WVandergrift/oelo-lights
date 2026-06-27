@@ -13,19 +13,39 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.x"
 
       - name: Install PlatformIO
         run: python -m pip install platformio
 
-      - name: Build versioned TinyS3 firmware
+      - name: Set firmware version from tag
         working-directory: firmware/tinys3
         env:
-          PLATFORMIO_BUILD_FLAGS: '-DFIRMWARE_VERSION="${{ github.ref_name }}"'
+          RELEASE_VERSION: ${{ github.ref_name }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          path = Path("esp32-ucs1903-poc.ino")
+          source = path.read_text()
+          replacement = rf'\1{json.dumps(os.environ["RELEASE_VERSION"])}'
+          source, count = re.subn(
+              r'(#define FIRMWARE_VERSION )"[^"]+"', replacement, source, count=1
+          )
+          if count != 1:
+              raise SystemExit("FIRMWARE_VERSION definition not found")
+          path.write_text(source)
+          PY
+
+      - name: Build versioned TinyS3 firmware
+        working-directory: firmware/tinys3
         run: platformio run -e um_tinys3
 
       - name: Prepare release assets
