@@ -121,6 +121,27 @@ second. Disabling sync stops the stream; WLED resumes its previous state after
 its configured realtime timeout. See
 [../../docs/wled-sync.md](../../docs/wled-sync.md) for limitations.
 
+## Remote firmware updates
+
+The TinyS3's standard 8 MB partition table already contains two 3.19 MiB OTA
+application slots. The browser can therefore write a new image to the inactive
+slot without overwriting the running firmware.
+
+1. Open **Settings → Firmware updates**.
+2. Configure an update password of 10–64 printable ASCII characters. Remote
+   updating is disabled until this is done.
+3. Build the firmware with `pio run -e um_tinys3`.
+4. Select `.pio/build/um_tinys3/firmware.bin`, enter the update password, and
+   upload it.
+5. Keep the controller powered until the browser reports that verification
+   completed. The controller then reboots into the new slot.
+
+The update endpoint uses HTTP Basic authentication. This prevents casual or
+unauthenticated flashing through the open compatibility AP, but the connection
+is still plain local HTTP. Do not expose the controller to the internet and do
+not reuse an important password. If both OTA images become invalid, recover by
+flashing over USB.
+
 ## Serial use
 
 Build the TinyS3 PlatformIO environment and open a 115200-baud serial

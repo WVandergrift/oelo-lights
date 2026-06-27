@@ -102,8 +102,19 @@ POST /api/patterns
 POST /api/zones
 POST /api/network
 POST /api/wled-sync
+POST /api/update-password
+POST /api/update
 ```
 
 `POST /api/wled-sync` accepts form fields `enabled`, `destination`,
 `pixelCount`, and `sourceZone`. A source of `-1` automatically uses the first
 zone in the active pattern. These settings are stored in NVS.
+
+`POST /api/update-password` configures the password used for remote firmware
+updates. Once configured, changing it requires HTTP Basic authentication with
+username `leaflights` and the current password.
+
+`POST /api/update` accepts a multipart `.bin` firmware image and uses the same
+HTTP Basic authentication. The image is streamed to the inactive OTA slot,
+verified by the ESP32 Update library, activated, and followed by a controlled
+reboot. Remote updating remains disabled until a password has been configured.

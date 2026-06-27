@@ -17,6 +17,20 @@ Consequences:
 The browser interface may also be exposed on the home LAN after provisioning.
 Do not port-forward it or expose it directly to the internet.
 
+## Firmware updates
+
+Remote firmware updates are disabled until a separate update password is
+configured. The OTA endpoint requires HTTP Basic authentication and writes only
+to the ESP32's inactive application slot before verification and reboot.
+
+Basic authentication protects the operation from unauthenticated clients, but
+it does not encrypt traffic. Configure updates from a trusted local network,
+use a unique password, and never expose the controller's HTTP server to the
+internet. Upload only `firmware.bin` built for the TinyS3 target in this
+repository. A power failure during update should leave the active image intact,
+but USB access remains the recovery path for invalid partition or bootloader
+images.
+
 ## Electrical safety
 
 - ESP32 GPIOs are not 5 V tolerant.

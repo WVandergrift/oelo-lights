@@ -5,6 +5,7 @@
 #include <FastLED.h>
 #include <LittleFS.h>
 #include <Preferences.h>
+#include <Update.h>
 #include <WebServer.h>
 #include <WiFi.h>
 #include <WiFiUdp.h>
@@ -20,6 +21,8 @@ constexpr uint16_t kMaxPhysicalPixels =
 constexpr uint8_t kDefaultBrightness = 32;
 constexpr uint8_t kMaxPatternColors = 128;
 constexpr char kAccessPointName[] = "OELO_1-23.0";
+constexpr char kFirmwareVersion[] = "0.3.0";
+constexpr char kOtaUsername[] = "leaflights";
 const IPAddress kAccessPointIp(172, 24, 1, 1);
 const IPAddress kAccessPointMask(255, 255, 255, 0);
 
@@ -90,11 +93,15 @@ WiFiUDP ddpUdp;
 String wifiSsid;
 String wifiPassword;
 String chipId;
+String otaPassword;
 uint32_t restartAt = 0;
 WledSyncConfig wledSync;
 uint8_t ddpSequence = 1;
 uint32_t lastDdpFrameAt = 0;
 String lastDdpStatus = "Disabled";
+bool otaUploadAuthorized = false;
+bool otaUploadSucceeded = false;
+String otaUploadError;
 
 void sendDdpFrame(bool force = false);
 
@@ -126,6 +133,7 @@ void loadConfiguration() {
   preferences.begin("leaflights", false);
   wifiSsid = preferences.getString("ssid", "");
   wifiPassword = preferences.getString("password", "");
+  otaPassword = preferences.getString("otaPassword", "");
   brightness = preferences.getUChar("brightness", kDefaultBrightness);
   wledSync.enabled = preferences.getBool("ddpEnabled", false);
   wledSync.destination =
@@ -238,7 +246,8 @@ void allOff() {
 void addCorsHeaders() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
   server.sendHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-  server.sendHeader("Access-Control-Allow-Headers", "Content-Type");
+  server.sendHeader("Access-Control-Allow-Headers",
+                    "Content-Type, Authorization");
   server.sendHeader("Cache-Control", "no-store");
 }
 
@@ -246,6 +255,26 @@ void sendText(int status, const String& text,
               const char* contentType = "text/plain") {
   addCorsHeaders();
   server.send(status, contentType, text);
+}
+
+bool otaAuthenticated() {
+  return !otaPassword.isEmpty() &&
+         server.authenticate(kOtaUsername, otaPassword.c_str());
+}
+
+void sendOtaUnauthorized() {
+  server.sendHeader("WWW-Authenticate",
+                    "Basic realm=\"Leaf Lights firmware update\"");
+  sendText(401, "Firmware update password required");
+}
+
+bool validOtaPassword(const String& password) {
+  if (password.length() < 10 || password.length() > 64) return false;
+  for (size_t i = 0; i < password.length(); ++i) {
+    const char value = password[i];
+    if (value < 33 || value > 126 || value == ':') return false;
+  }
+  return true;
 }
 
 void scheduleRestart() {
@@ -808,6 +837,8 @@ void startFastFireworks(uint8_t zoneMask) {
 void sendStatusJson() {
   JsonDocument document;
   document["chipId"] = chipId;
+  document["firmwareVersion"] = kFirmwareVersion;
+  document["buildDate"] = __DATE__ " " __TIME__;
   document["brightness"] = brightness;
   document["activePattern"] = activePattern.type;
   document["patternRunning"] = activePattern.running;
@@ -825,6 +856,9 @@ void sendStatusJson() {
   sync["pixelCount"] = wledSync.pixelCount;
   sync["sourceZone"] = wledSync.sourceZone;
   sync["status"] = lastDdpStatus;
+  JsonObject ota = document["ota"].to<JsonObject>();
+  ota["configured"] = !otaPassword.isEmpty();
+  ota["maxImageBytes"] = ESP.getFreeSketchSpace();
   JsonArray outputZones = document["zones"].to<JsonArray>();
   for (uint8_t i = 0; i < kZoneCount; ++i) {
     JsonObject zone = outputZones.add<JsonObject>();
@@ -942,6 +976,77 @@ void handleWledSyncConfiguration() {
                                  : "WLED realtime sync disabled");
 }
 
+void handleOtaPasswordConfiguration() {
+  if (!otaPassword.isEmpty() && !otaAuthenticated()) {
+    sendOtaUnauthorized();
+    return;
+  }
+  const String newPassword = server.arg("newPassword");
+  if (!validOtaPassword(newPassword)) {
+    sendText(400,
+             "Use 10-64 printable ASCII characters without spaces or colons");
+    return;
+  }
+  otaPassword = newPassword;
+  preferences.putString("otaPassword", otaPassword);
+  sendText(200, "Firmware update password saved");
+}
+
+void handleFirmwareUpload() {
+  HTTPUpload& upload = server.upload();
+  if (upload.status == UPLOAD_FILE_START) {
+    otaUploadAuthorized = otaAuthenticated();
+    otaUploadSucceeded = false;
+    otaUploadError = "";
+    if (!otaUploadAuthorized) {
+      otaUploadError = "Firmware update password required";
+      return;
+    }
+    String filename = upload.filename;
+    filename.toLowerCase();
+    if (!filename.endsWith(".bin")) {
+      otaUploadError = "Select a compiled .bin firmware image";
+      return;
+    }
+    allOff();
+    if (!Update.begin(UPDATE_SIZE_UNKNOWN, U_FLASH)) {
+      otaUploadError = Update.errorString();
+    }
+  } else if (!otaUploadAuthorized || !otaUploadError.isEmpty()) {
+    return;
+  } else if (upload.status == UPLOAD_FILE_WRITE) {
+    if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
+      const String error = Update.errorString();
+      Update.abort();
+      otaUploadError = error;
+    }
+  } else if (upload.status == UPLOAD_FILE_END) {
+    if (Update.end(true)) {
+      otaUploadSucceeded = true;
+    } else {
+      otaUploadError = Update.errorString();
+    }
+  } else if (upload.status == UPLOAD_FILE_ABORTED) {
+    Update.abort();
+    otaUploadError = "Firmware upload was interrupted";
+  }
+}
+
+void handleFirmwareUploadComplete() {
+  if (!otaAuthenticated()) {
+    sendOtaUnauthorized();
+    return;
+  }
+  server.sendHeader("Connection", "close");
+  if (!otaUploadSucceeded) {
+    sendText(500, otaUploadError.isEmpty() ? "Firmware update failed"
+                                           : otaUploadError);
+    return;
+  }
+  sendText(200, "Firmware verified; rebooting into the update");
+  scheduleRestart();
+}
+
 void handleScanNetworks() {
   const int count = WiFi.scanNetworks();
   String response;
@@ -1046,6 +1151,10 @@ void configureWebServer() {
   server.on("/api/zones", HTTP_POST, handleWebZones);
   server.on("/api/network", HTTP_POST, handleWebNetwork);
   server.on("/api/wled-sync", HTTP_POST, handleWledSyncConfiguration);
+  server.on("/api/update-password", HTTP_POST,
+            handleOtaPasswordConfiguration);
+  server.on("/api/update", HTTP_POST, handleFirmwareUploadComplete,
+            handleFirmwareUpload);
   server.onNotFound([]() {
     if (server.method() == HTTP_OPTIONS) {
       sendText(204, "");
@@ -1068,6 +1177,13 @@ void configureWifi() {
     const uint32_t deadline = millis() + 10000;
     while (WiFi.status() != WL_CONNECTED && millis() < deadline) {
       delay(100);
+    }
+    if (WiFi.status() != WL_CONNECTED) {
+      // Stop background station scans so the compatibility AP remains stable
+      // when saved home-network credentials are stale or out of range. The
+      // credentials stay in our NVS and will be tried again after a reboot.
+      WiFi.setAutoReconnect(false);
+      WiFi.disconnect(false, false);
     }
   }
 
