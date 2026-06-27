@@ -1,0 +1,15 @@
+.DS_Store
+.pio/
+.vscode/
+*.bin
+*.elf
+*.map
+backups/
+secrets.h
+wifi_credentials.h
+
+# Reverse-engineering inputs are intentionally not part of this repository.
+*.apk
+*.xapk
+*.dex
+decompiled/

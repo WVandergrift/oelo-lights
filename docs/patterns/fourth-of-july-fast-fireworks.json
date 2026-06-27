@@ -1,0 +1,20 @@
+{
+  "source": "Oelo global pattern catalog",
+  "retrieved_at": "2026-06-27",
+  "_id": "6509d5b2cba4c88e3bfc2648",
+  "name": "Fourth of July: Fast Fireworks",
+  "patternType": "twinkle",
+  "num_colors": 6,
+  "direction": "R",
+  "speed": 10,
+  "gap": 0,
+  "pause": 0,
+  "colors": [
+    [255, 255, 255],
+    [0, 0, 255],
+    [0, 0, 255],
+    [255, 255, 255],
+    [255, 0, 0],
+    [255, 0, 0]
+  ]
+}
