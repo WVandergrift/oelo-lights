@@ -40,6 +40,54 @@ The web server, persistent settings, Local AP API, pattern persistence, and all
 vendor's animation engines is not claimed; Fast Fireworks uses the recovered
 name, palette, type, direction, and speed with our non-blocking twinkle engine.
 
+## Browser interface
+
+These screenshots were captured from a live `v0.5.1` controller. Network
+credentials, personal SSIDs, LAN addresses, MAC addresses, chip identifiers,
+firmware passwords, and diagnostic data are intentionally excluded.
+
+### Daily control
+
+The dashboard keeps routine actions together: choose one or more zones, adjust
+brightness, set a solid color, start a saved pattern, or turn every zone off.
+Changes are explicit—the controller does not alter the lights until **Play** is
+pressed.
+
+![Leaf Lights dashboard with zone, brightness, color, and quick-pattern controls](docs/images/dashboard.jpg)
+
+### Animated pattern library
+
+Saved profiles include an animated LED preview plus their movement, palette
+size, speed, direction, and gap. Profiles can be played, edited, or deleted
+without relying on the vendor cloud.
+
+![Saved pattern library with animated red, white, and blue previews](docs/images/patterns.jpg)
+
+### Pattern studio
+
+The editor exposes every recovered movement type plus the custom multi-burst
+fireworks engine. It provides palette editing, animation parameters, zone
+selection, a browser preview, direct testing on the lights, and persistent
+saved profiles.
+
+![Pattern studio showing movement choices and a live LED preview](docs/images/pattern-studio.jpg)
+
+### Original themes
+
+**Midnight**, **Firework**, and **Solar** replace the vendor-like green chrome.
+Theme choice is stored independently in each browser, allowing different phones
+or computers to use their preferred appearance.
+
+![Appearance settings with Midnight, Firework, and Solar themes](docs/images/appearance.jpg)
+
+### Exact-frame WLED synchronization
+
+Optional DDP synchronization sends the controller's rendered pixels to one
+WLED receiver or every receiver on the LAN. This preserves the Oelo palette and
+motion instead of attempting to translate effects by name.
+
+![WLED realtime synchronization settings using the DDP broadcast destination](docs/images/wled-sync.jpg)
+
 ## Quick start
 
 Requirements:
