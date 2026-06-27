@@ -1,5 +1,7 @@
 # Oelo / LeafFilter lights research and replacement controller
 
+![Leaf Lights pattern editor](docs/images/demo.gif)
+
 This repository documents the protocol used by an Oelo/Lighting by LeafFilter
 controller and provides an open ESP32-S3 sample controller for existing
 UCS1903 lighting installations.
