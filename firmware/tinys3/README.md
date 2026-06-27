@@ -67,8 +67,10 @@ http://172.24.1.1
 
 The web page provides a phone-first daily-control screen, animated saved-pattern
 previews, a pattern editor, multi-zone selection, per-zone hardware settings,
-home Wi-Fi provisioning, diagnostics, and optional WLED realtime sync. Settings
-are stored in ESP32 NVS and survive power loss. Saved patterns live in
+home Wi-Fi provisioning, diagnostics, and optional WLED realtime sync. The
+Midnight, Firework, and Solar interface themes are selected under
+**Settings → Appearance** and persist independently in each browser. Controller
+settings are stored in ESP32 NVS and survive power loss. Saved patterns live in
 LittleFS. When home Wi-Fi is configured, the same page is available at the
 displayed LAN address and, where mDNS is supported,
 `http://leaflights.local`.

@@ -10,7 +10,8 @@ The sample firmware currently runs on an Unexpected Maker TinyS3 and provides:
 - Oelo's two-physical-pixels-per-fixture mapping;
 - persistent zone names, fixture counts, enable state, and color order;
 - a phone-first browser interface with animated pattern previews, daily controls,
-  pattern editing, and advanced installation settings;
+  pattern editing, three original visual themes, and advanced installation
+  settings;
 - compatibility with the LeafFilter app's offline Local AP Control mode;
 - controller-hosted offline pattern profiles and a ten-preset Independence Day
   collection;

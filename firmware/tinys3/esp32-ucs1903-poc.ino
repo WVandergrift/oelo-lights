@@ -27,7 +27,7 @@ constexpr uint8_t kMaxPatternColors = 128;
 constexpr uint16_t kPatternLibraryVersion = 1;
 constexpr char kAccessPointName[] = "OELO_1-23.0";
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "0.5.0-dev"
+#define FIRMWARE_VERSION "0.5.1-dev"
 #endif
 constexpr char kFirmwareVersion[] = FIRMWARE_VERSION;
 constexpr char kOtaUsername[] = "leaflights";
