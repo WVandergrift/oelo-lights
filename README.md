@@ -17,6 +17,8 @@ The sample firmware currently runs on an Unexpected Maker TinyS3 and provides:
 - optional realtime DDP broadcast of rendered frames to WLED controllers;
 - password-protected browser firmware updates using the ESP32's inactive OTA
   application slot;
+- GitHub release discovery, release-note review, selected-version installation,
+  and opt-in automatic stable updates;
 - the recovered **Fourth of July: Fast Fireworks** profile.
 
 ## Current status
@@ -83,6 +85,7 @@ the same. Never power the lights from the TinyS3.
 - [LeafFilter app offline workflow](docs/leaf-filter-app.md)
 - [Patterns and Fast Fireworks](docs/patterns.md)
 - [WLED realtime synchronization](docs/wled-sync.md)
+- [GitHub releases and automatic updates](docs/releases.md)
 - [Firmware update path](docs/firmware-update-path.md)
 - [Research method and confidence](docs/research.md)
 - [Sample firmware details](firmware/tinys3/README.md)

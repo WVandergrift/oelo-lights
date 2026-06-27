@@ -104,6 +104,9 @@ POST /api/network
 POST /api/wled-sync
 POST /api/update-password
 POST /api/update
+GET  /api/releases
+POST /api/install-release
+POST /api/automatic-updates
 ```
 
 `POST /api/wled-sync` accepts form fields `enabled`, `destination`,
@@ -118,3 +121,16 @@ username `leaflights` and the current password.
 HTTP Basic authentication. The image is streamed to the inactive OTA slot,
 verified by the ESP32 Update library, activated, and followed by a controlled
 reboot. Remote updating remains disabled until a password has been configured.
+
+`GET /api/releases` retrieves the five newest public GitHub releases through a
+certificate-validated connection and returns only compatible
+`leaf-lights-tinys3.bin` assets with a GitHub-provided SHA-256 digest.
+
+`POST /api/install-release` requires update-password authentication. It accepts
+the selected release metadata returned by `/api/releases`, restricts downloads
+to this repository's release path, downloads through validated HTTPS, verifies
+size and SHA-256, and activates the inactive OTA slot.
+
+`POST /api/automatic-updates` also requires update-password authentication.
+When enabled, the controller checks every six hours while connected to home
+Wi-Fi and installs only newer, non-prerelease semantic versions.

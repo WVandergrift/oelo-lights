@@ -3,13 +3,17 @@
 #include <ArduinoJson.h>
 #include <ESPmDNS.h>
 #include <FastLED.h>
+#include <HTTPClient.h>
 #include <LittleFS.h>
 #include <Preferences.h>
 #include <Update.h>
 #include <WebServer.h>
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <WiFiUdp.h>
+#include <mbedtls/sha256.h>
 
+#include "github_roots.h"
 #include "web_ui.h"
 
 constexpr uint8_t kZoneCount = 6;
@@ -21,8 +25,16 @@ constexpr uint16_t kMaxPhysicalPixels =
 constexpr uint8_t kDefaultBrightness = 32;
 constexpr uint8_t kMaxPatternColors = 128;
 constexpr char kAccessPointName[] = "OELO_1-23.0";
-constexpr char kFirmwareVersion[] = "0.3.0";
+#ifndef FIRMWARE_VERSION
+#define FIRMWARE_VERSION "0.4.0-dev"
+#endif
+constexpr char kFirmwareVersion[] = FIRMWARE_VERSION;
 constexpr char kOtaUsername[] = "leaflights";
+constexpr char kGithubApiUrl[] =
+    "https://api.github.com/repos/WVandergrift/oelo-lights/releases?per_page=5";
+constexpr char kGithubDownloadPrefix[] =
+    "https://github.com/WVandergrift/oelo-lights/releases/download/";
+constexpr char kReleaseAssetName[] = "leaf-lights-tinys3.bin";
 const IPAddress kAccessPointIp(172, 24, 1, 1);
 const IPAddress kAccessPointMask(255, 255, 255, 0);
 
@@ -81,6 +93,17 @@ struct WledSyncConfig {
   int8_t sourceZone = -1;
 };
 
+struct GithubRelease {
+  String tag;
+  String name;
+  String notes;
+  String publishedAt;
+  String downloadUrl;
+  String digest;
+  size_t size = 0;
+  bool prerelease = false;
+};
+
 CRGB zonePixels[kZoneCount][kMaxPhysicalPixels];
 ZoneConfig zones[kZoneCount];
 bool zoneRegistered[kZoneCount] = {};
@@ -102,6 +125,9 @@ String lastDdpStatus = "Disabled";
 bool otaUploadAuthorized = false;
 bool otaUploadSucceeded = false;
 String otaUploadError;
+bool automaticUpdates = false;
+uint32_t nextAutomaticUpdateAt = 0;
+String automaticUpdateStatus = "Automatic updates disabled";
 
 void sendDdpFrame(bool force = false);
 
@@ -134,6 +160,7 @@ void loadConfiguration() {
   wifiSsid = preferences.getString("ssid", "");
   wifiPassword = preferences.getString("password", "");
   otaPassword = preferences.getString("otaPassword", "");
+  automaticUpdates = preferences.getBool("autoUpdate", false);
   brightness = preferences.getUChar("brightness", kDefaultBrightness);
   wledSync.enabled = preferences.getBool("ddpEnabled", false);
   wledSync.destination =
@@ -279,6 +306,234 @@ bool validOtaPassword(const String& password) {
 
 void scheduleRestart() {
   restartAt = millis() + 1500;
+}
+
+bool ensureGithubClock(String& error) {
+  if (WiFi.status() != WL_CONNECTED) {
+    error = "Connect the controller to home Wi-Fi first";
+    return false;
+  }
+  time_t now = time(nullptr);
+  if (now > 1700000000) return true;
+  configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+  const uint32_t deadline = millis() + 8000;
+  while (time(nullptr) <= 1700000000 && millis() < deadline) delay(100);
+  if (time(nullptr) <= 1700000000) {
+    error = "Unable to set the clock for secure GitHub access";
+    return false;
+  }
+  return true;
+}
+
+bool beginGithubRequest(HTTPClient& http, WiFiClientSecure& client,
+                        const String& url, String& error) {
+  if (!ensureGithubClock(error)) return false;
+  client.setCACert(GITHUB_ROOT_CA);
+  client.setHandshakeTimeout(15);
+  client.setTimeout(15);
+  http.setConnectTimeout(10000);
+  http.setTimeout(20000);
+  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+  if (!http.begin(client, url)) {
+    error = "Unable to initialize the GitHub HTTPS request";
+    return false;
+  }
+  http.addHeader("Accept", "application/vnd.github+json");
+  http.addHeader("User-Agent", "WVandergrift-oelo-lights/" +
+                                   String(kFirmwareVersion));
+  http.addHeader("X-GitHub-Api-Version", "2026-03-10");
+  return true;
+}
+
+void parseVersion(const String& value, int parts[3]) {
+  parts[0] = parts[1] = parts[2] = 0;
+  uint8_t part = 0;
+  bool reading = false;
+  for (size_t i = 0; i < value.length() && part < 3; ++i) {
+    const char character = value[i];
+    if (character >= '0' && character <= '9') {
+      parts[part] = parts[part] * 10 + character - '0';
+      reading = true;
+    } else if (reading) {
+      ++part;
+      reading = false;
+    }
+  }
+}
+
+int compareVersions(const String& first, const String& second) {
+  int firstParts[3], secondParts[3];
+  parseVersion(first, firstParts);
+  parseVersion(second, secondParts);
+  for (uint8_t i = 0; i < 3; ++i) {
+    if (firstParts[i] != secondParts[i]) {
+      return firstParts[i] > secondParts[i] ? 1 : -1;
+    }
+  }
+  return 0;
+}
+
+uint8_t fetchGithubReleases(GithubRelease* output, uint8_t capacity,
+                            String& error) {
+  WiFiClientSecure client;
+  HTTPClient http;
+  if (!beginGithubRequest(http, client, kGithubApiUrl, error)) return 0;
+  const int status = http.GET();
+  if (status != HTTP_CODE_OK) {
+    error = status > 0 ? String("GitHub API returned HTTP ") + status
+                       : String("GitHub connection failed: ") +
+                             HTTPClient::errorToString(status);
+    http.end();
+    return 0;
+  }
+
+  JsonDocument filter;
+  JsonObject releaseFilter = filter[0].to<JsonObject>();
+  releaseFilter["tag_name"] = true;
+  releaseFilter["name"] = true;
+  releaseFilter["body"] = true;
+  releaseFilter["published_at"] = true;
+  releaseFilter["draft"] = true;
+  releaseFilter["prerelease"] = true;
+  JsonObject assetFilter = releaseFilter["assets"][0].to<JsonObject>();
+  assetFilter["name"] = true;
+  assetFilter["browser_download_url"] = true;
+  assetFilter["size"] = true;
+  assetFilter["digest"] = true;
+
+  JsonDocument document;
+  const DeserializationError parseError = deserializeJson(
+      document, http.getStream(), DeserializationOption::Filter(filter));
+  http.end();
+  if (parseError || !document.is<JsonArray>()) {
+    error = String("Unable to parse GitHub releases: ") + parseError.c_str();
+    return 0;
+  }
+
+  uint8_t count = 0;
+  for (JsonObject release : document.as<JsonArray>()) {
+    if (count >= capacity) break;
+    if (release["draft"] | false) continue;
+    for (JsonObject asset : release["assets"].as<JsonArray>()) {
+      if (String(asset["name"] | "") != kReleaseAssetName) continue;
+      const String digest = asset["digest"] | "";
+      const String url = asset["browser_download_url"] | "";
+      if (!digest.startsWith("sha256:") || digest.length() != 71 ||
+          !url.startsWith(kGithubDownloadPrefix)) {
+        continue;
+      }
+      GithubRelease& item = output[count++];
+      item.tag = String(release["tag_name"] | "").substring(0, 32);
+      item.name = String(release["name"] | item.tag).substring(0, 80);
+      item.notes = String(release["body"] | "").substring(0, 6000);
+      item.publishedAt =
+          String(release["published_at"] | "").substring(0, 32);
+      item.downloadUrl = url;
+      item.digest = digest;
+      item.size = asset["size"] | 0;
+      item.prerelease = release["prerelease"] | false;
+      break;
+    }
+  }
+  if (count == 0) error = "No compatible firmware releases were found";
+  return count;
+}
+
+bool installGithubRelease(const GithubRelease& release, String& error) {
+  if (!release.downloadUrl.startsWith(kGithubDownloadPrefix) ||
+      !release.digest.startsWith("sha256:") ||
+      release.digest.length() != 71 || release.size == 0) {
+    error = "Release metadata failed validation";
+    return false;
+  }
+  if (release.size > ESP.getFreeSketchSpace()) {
+    error = "Release image is larger than the inactive firmware slot";
+    return false;
+  }
+
+  WiFiClientSecure client;
+  HTTPClient http;
+  if (!beginGithubRequest(http, client, release.downloadUrl, error)) {
+    return false;
+  }
+  const int status = http.GET();
+  if (status != HTTP_CODE_OK) {
+    error = status > 0 ? String("Firmware download returned HTTP ") + status
+                       : String("Firmware download failed: ") +
+                             HTTPClient::errorToString(status);
+    http.end();
+    return false;
+  }
+  const int contentLength = http.getSize();
+  if (contentLength > 0 && static_cast<size_t>(contentLength) != release.size) {
+    error = "Downloaded firmware size does not match the GitHub release";
+    http.end();
+    return false;
+  }
+
+  allOff();
+  if (!Update.begin(release.size, U_FLASH)) {
+    error = Update.errorString();
+    http.end();
+    return false;
+  }
+
+  mbedtls_sha256_context hashContext;
+  mbedtls_sha256_init(&hashContext);
+  mbedtls_sha256_starts_ret(&hashContext, 0);
+  WiFiClient* stream = http.getStreamPtr();
+  uint8_t buffer[4096];
+  size_t written = 0;
+  uint32_t lastDataAt = millis();
+  while (written < release.size) {
+    const size_t available = stream->available();
+    if (available > 0) {
+      const size_t wanted = min<size_t>(sizeof(buffer),
+          min<size_t>(available, release.size - written));
+      const size_t received = stream->readBytes(buffer, wanted);
+      if (received == 0) continue;
+      if (Update.write(buffer, received) != received) {
+        error = Update.errorString();
+        break;
+      }
+      mbedtls_sha256_update_ret(&hashContext, buffer, received);
+      written += received;
+      lastDataAt = millis();
+    } else {
+      if (!http.connected() || millis() - lastDataAt > 20000) {
+        error = "Firmware download ended before the complete image arrived";
+        break;
+      }
+      delay(1);
+    }
+  }
+
+  uint8_t hash[32];
+  mbedtls_sha256_finish_ret(&hashContext, hash);
+  mbedtls_sha256_free(&hashContext);
+  http.end();
+  if (written != release.size || !error.isEmpty()) {
+    Update.abort();
+    return false;
+  }
+
+  char hashHex[65];
+  for (uint8_t i = 0; i < 32; ++i) {
+    snprintf(hashHex + i * 2, 3, "%02x", hash[i]);
+  }
+  hashHex[64] = '\0';
+  String expected = release.digest.substring(7);
+  expected.toLowerCase();
+  if (expected != hashHex) {
+    Update.abort();
+    error = "Firmware SHA-256 does not match the GitHub release";
+    return false;
+  }
+  if (!Update.end(true)) {
+    error = Update.errorString();
+    return false;
+  }
+  return true;
 }
 
 void sendControllerJson() {
@@ -859,6 +1114,8 @@ void sendStatusJson() {
   JsonObject ota = document["ota"].to<JsonObject>();
   ota["configured"] = !otaPassword.isEmpty();
   ota["maxImageBytes"] = ESP.getFreeSketchSpace();
+  ota["automaticUpdates"] = automaticUpdates;
+  ota["automaticUpdateStatus"] = automaticUpdateStatus;
   JsonArray outputZones = document["zones"].to<JsonArray>();
   for (uint8_t i = 0; i < kZoneCount; ++i) {
     JsonObject zone = outputZones.add<JsonObject>();
@@ -1047,6 +1304,100 @@ void handleFirmwareUploadComplete() {
   scheduleRestart();
 }
 
+void handleGithubReleases() {
+  GithubRelease releases[5];
+  String error;
+  const uint8_t count = fetchGithubReleases(releases, 5, error);
+  if (count == 0) {
+    sendText(502, error);
+    return;
+  }
+  JsonDocument document;
+  document["currentVersion"] = kFirmwareVersion;
+  JsonArray output = document["releases"].to<JsonArray>();
+  for (uint8_t i = 0; i < count; ++i) {
+    JsonObject release = output.add<JsonObject>();
+    release["tag"] = releases[i].tag;
+    release["name"] = releases[i].name;
+    release["notes"] = releases[i].notes;
+    release["publishedAt"] = releases[i].publishedAt;
+    release["url"] = releases[i].downloadUrl;
+    release["digest"] = releases[i].digest;
+    release["size"] = releases[i].size;
+    release["prerelease"] = releases[i].prerelease;
+    release["newer"] =
+        compareVersions(releases[i].tag, kFirmwareVersion) > 0;
+  }
+  String response;
+  serializeJson(document, response);
+  sendText(200, response, "application/json");
+}
+
+void handleInstallGithubRelease() {
+  if (!otaAuthenticated()) {
+    sendOtaUnauthorized();
+    return;
+  }
+  GithubRelease release;
+  release.tag = server.arg("tag").substring(0, 32);
+  release.name = release.tag;
+  release.downloadUrl = server.arg("url");
+  release.digest = server.arg("digest");
+  release.size = strtoul(server.arg("size").c_str(), nullptr, 10);
+  String error;
+  if (!installGithubRelease(release, error)) {
+    sendText(502, error);
+    return;
+  }
+  sendText(200, String("Release ") + release.tag +
+                    " verified; rebooting into the update");
+  scheduleRestart();
+}
+
+void handleAutomaticUpdateConfiguration() {
+  if (!otaAuthenticated()) {
+    sendOtaUnauthorized();
+    return;
+  }
+  const String enabled = server.arg("enabled");
+  automaticUpdates = enabled == "1" || enabled == "true" || enabled == "on";
+  preferences.putBool("autoUpdate", automaticUpdates);
+  nextAutomaticUpdateAt = millis() + 15000;
+  automaticUpdateStatus = automaticUpdates
+                              ? "Enabled; checking stable releases soon"
+                              : "Automatic updates disabled";
+  sendText(200, automaticUpdateStatus);
+}
+
+void serviceAutomaticUpdates() {
+  if (!automaticUpdates || WiFi.status() != WL_CONNECTED) return;
+  if (static_cast<int32_t>(millis() - nextAutomaticUpdateAt) < 0) return;
+  nextAutomaticUpdateAt = millis() + 6UL * 60UL * 60UL * 1000UL;
+
+  automaticUpdateStatus = "Checking GitHub releases";
+  GithubRelease releases[5];
+  String error;
+  const uint8_t count = fetchGithubReleases(releases, 5, error);
+  if (count == 0) {
+    automaticUpdateStatus = String("Check failed: ") + error;
+    return;
+  }
+  for (uint8_t i = 0; i < count; ++i) {
+    if (releases[i].prerelease ||
+        compareVersions(releases[i].tag, kFirmwareVersion) <= 0) {
+      continue;
+    }
+    automaticUpdateStatus = String("Installing ") + releases[i].tag;
+    if (!installGithubRelease(releases[i], error)) {
+      automaticUpdateStatus = String("Install failed: ") + error;
+      return;
+    }
+    delay(100);
+    ESP.restart();
+  }
+  automaticUpdateStatus = "Up to date";
+}
+
 void handleScanNetworks() {
   const int count = WiFi.scanNetworks();
   String response;
@@ -1155,6 +1506,11 @@ void configureWebServer() {
             handleOtaPasswordConfiguration);
   server.on("/api/update", HTTP_POST, handleFirmwareUploadComplete,
             handleFirmwareUpload);
+  server.on("/api/releases", HTTP_GET, handleGithubReleases);
+  server.on("/api/install-release", HTTP_POST,
+            handleInstallGithubRelease);
+  server.on("/api/automatic-updates", HTTP_POST,
+            handleAutomaticUpdateConfiguration);
   server.onNotFound([]() {
     if (server.method() == HTTP_OPTIONS) {
       sendText(204, "");
@@ -1249,6 +1605,10 @@ void setup() {
   initializeLeds();
   configureWifi();
   configureWebServer();
+  nextAutomaticUpdateAt = millis() + 60000;
+  automaticUpdateStatus = automaticUpdates
+                              ? "Enabled; first check in one minute"
+                              : "Automatic updates disabled";
 
   Serial.println("LeafFilter/Oelo UCS1903 test controller ready");
   Serial.printf("Setup AP: %s at http://%s\n", kAccessPointName,
@@ -1264,6 +1624,7 @@ void loop() {
   server.handleClient();
   updateActivePattern();
   serviceDdpSync();
+  serviceAutomaticUpdates();
   if (Serial.available()) {
     handleSerialCommand(Serial.readStringUntil('\n'));
   }

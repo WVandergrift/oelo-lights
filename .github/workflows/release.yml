@@ -1,0 +1,44 @@
+name: Release firmware
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install PlatformIO
+        run: python -m pip install platformio
+
+      - name: Build versioned TinyS3 firmware
+        working-directory: firmware/tinys3
+        env:
+          PLATFORMIO_BUILD_FLAGS: '-DFIRMWARE_VERSION="${{ github.ref_name }}"'
+        run: platformio run -e um_tinys3
+
+      - name: Prepare release assets
+        run: |
+          cp firmware/tinys3/.pio/build/um_tinys3/firmware.bin leaf-lights-tinys3.bin
+          sha256sum leaf-lights-tinys3.bin > SHA256SUMS
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "${GITHUB_REF_NAME}"
+          leaf-lights-tinys3.bin SHA256SUMS
+          --verify-tag
+          --generate-notes
+          --title "Leaf Lights ${GITHUB_REF_NAME}"

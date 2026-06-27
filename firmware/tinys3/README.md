@@ -142,6 +142,20 @@ is still plain local HTTP. Do not expose the controller to the internet and do
 not reuse an important password. If both OTA images become invalid, recover by
 flashing over USB.
 
+### GitHub releases
+
+The firmware update panel can also retrieve releases directly from
+`WVandergrift/oelo-lights`. Each compatible release displays its release notes,
+version, size, and whether it is newer than the installed image. Installation
+requires the update password.
+
+The controller validates the GitHub HTTPS certificate, restricts the asset URL
+to this repository, and compares the downloaded image against the SHA-256
+digest reported by GitHub before activating it. Automatic updates are opt-in,
+check every six hours, ignore prereleases, and install only a higher semantic
+version. Details for publishing and certificate maintenance are in
+[../../docs/releases.md](../../docs/releases.md).
+
 ## Serial use
 
 Build the TinyS3 PlatformIO environment and open a 115200-baud serial

@@ -31,6 +31,18 @@ repository. A power failure during update should leave the active image intact,
 but USB access remains the recovery path for invalid partition or bootloader
 images.
 
+GitHub release installs add three checks before ESP32 image validation:
+
+- TLS is validated against embedded USERTrust ECC and ISRG Root X1 trust
+  anchors;
+- download URLs must be under this repository's GitHub release path;
+- the complete image must match the SHA-256 digest in GitHub's release-asset
+  metadata.
+
+The embedded trust anchors must be reviewed if GitHub changes certificate
+chains. Automatic updates are disabled by default, require the update password
+to enable, ignore prereleases, and only advance to a higher semantic version.
+
 ## Electrical safety
 
 - ESP32 GPIOs are not 5 V tolerant.
