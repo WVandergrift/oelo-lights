@@ -97,12 +97,13 @@ The sample's own web UI additionally uses:
 ```text
 GET  /api/status
 GET  /api/color
-GET  /api/brightness?value=<1-255>
+GET  /api/brightness?value=<1-204>
 GET  /api/off
 GET  /api/preset/fast-fireworks
 POST /api/patterns
 POST /api/zones
 POST /api/network
+POST /api/restart
 POST /api/wled-sync
 POST /api/update-password
 POST /api/update
@@ -119,20 +120,31 @@ zone in the active pattern. These settings are stored in NVS.
 updates. Once configured, changing it requires HTTP Basic authentication with
 username `leaflights` and the current password.
 
-`POST /api/update` accepts a multipart `.bin` firmware image and uses the same
-HTTP Basic authentication. The image is streamed to the inactive OTA slot,
-verified by the ESP32 Update library, activated, and followed by a controlled
-reboot. Remote updating remains disabled until a password has been configured.
+`POST /api/network` stores home-network settings and the optional
+`compatibilityApEnabled` flag. Disabling the open compatibility AP requires a
+configured home network. If that network fails at boot, the firmware starts a
+temporary recovery AP rather than leaving the controller unreachable.
+
+`POST /api/restart` schedules a controlled controller restart.
+
+`POST /api/update` accepts a multipart `.bin` firmware image. The image is
+streamed to the inactive OTA slot, verified by the ESP32 Update library,
+activated, and followed by a controlled reboot.
+
+Firmware upload, release installation, automatic-update configuration, and
+restart require HTTP Basic authentication whenever the open compatibility or
+recovery AP is active. Authentication is optional when the controller is
+reachable only through home Wi-Fi.
 
 `GET /api/releases` retrieves the five newest public GitHub releases through a
 certificate-validated connection and returns only compatible
 `leaf-lights-tinys3.bin` assets with a GitHub-provided SHA-256 digest.
 
-`POST /api/install-release` requires update-password authentication. It accepts
+`POST /api/install-release` accepts
 the selected release metadata returned by `/api/releases`, restricts downloads
 to this repository's release path, downloads through validated HTTPS, verifies
 size and SHA-256, and activates the inactive OTA slot.
 
-`POST /api/automatic-updates` also requires update-password authentication.
+`POST /api/automatic-updates` configures the opt-in update check.
 When enabled, the controller checks every six hours while connected to home
 Wi-Fi and installs only newer, non-prerelease semantic versions.

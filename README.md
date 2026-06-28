@@ -20,8 +20,8 @@ The sample firmware currently runs on an Unexpected Maker TinyS3 and provides:
 - non-blocking approximations of all 17 movement types exposed by the app plus
   a custom multi-burst fireworks engine;
 - optional realtime DDP broadcast of rendered frames to WLED controllers;
-- password-protected browser firmware updates using the ESP32's inactive OTA
-  application slot;
+- browser firmware updates using the ESP32's inactive OTA application slot,
+  password-protected whenever the open compatibility network is active;
 - GitHub release discovery, release-note review, selected-version installation,
   and opt-in automatic stable updates;
 - the recovered **Fourth of July: Fast Fireworks** profile and nine original

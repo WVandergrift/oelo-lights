@@ -93,6 +93,12 @@ LittleFS. When home Wi-Fi is configured, the same page is available at the
 displayed LAN address and, where mDNS is supported,
 `http://leaflights.local`.
 
+The open `OELO_1-23.0` network can be disabled under **Settings → Network**
+after home Wi-Fi is configured. If the saved home network fails at boot, the
+controller temporarily restores `OELO_1-23.0` as a recovery network to prevent
+lockout. Firmware updates and device restarts require the update password
+whenever the compatibility or recovery network is active.
+
 The following original local-controller endpoints are implemented for app
 compatibility:
 
@@ -152,11 +158,12 @@ application slots. The browser can therefore write a new image to the inactive
 slot without overwriting the running firmware.
 
 1. Open **Settings → Firmware updates**.
-2. Configure an update password of 10–64 printable ASCII characters. Remote
-   updating is disabled until this is done.
+2. If the open Oelo/LeafFilter compatibility network is active, configure an
+   update password of 10–64 printable ASCII characters. Authentication is
+   optional while the controller is reachable only through home Wi-Fi.
 3. Build the firmware with `pio run -e um_tinys3`.
-4. Select `.pio/build/um_tinys3/firmware.bin`, enter the update password, and
-   upload it.
+4. Select `.pio/build/um_tinys3/firmware.bin`, enter the update password when
+   requested, and upload it.
 5. Keep the controller powered until the browser reports that verification
    completed. The controller then reboots into the new slot.
 
@@ -171,7 +178,8 @@ flashing over USB.
 The firmware update panel can also retrieve releases directly from
 `WVandergrift/oelo-lights`. Each compatible release displays its release notes,
 version, size, and whether it is newer than the installed image. Installation
-requires the update password.
+requires the update password whenever the open compatibility or recovery
+network is active.
 
 The controller validates the GitHub HTTPS certificate, restricts the asset URL
 to this repository, and compares the downloaded image against the SHA-256

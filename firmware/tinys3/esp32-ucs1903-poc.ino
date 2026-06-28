@@ -38,7 +38,7 @@ constexpr uint8_t kMaxPatternColors = 128;
 constexpr uint16_t kPatternLibraryVersion = 1;
 constexpr char kAccessPointName[] = "OELO_1-23.0";
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "0.5.2-dev"
+#define FIRMWARE_VERSION "0.5.3-dev"
 #endif
 constexpr char kFirmwareVersion[] = FIRMWARE_VERSION;
 constexpr char kOtaUsername[] = "leaflights";
@@ -139,6 +139,9 @@ String wifiSsid;
 String wifiPassword;
 String chipId;
 String otaPassword;
+bool compatibilityApEnabled = true;
+bool compatibilityApActive = false;
+bool compatibilityApFallback = false;
 uint32_t restartAt = 0;
 WledSyncConfig wledSync;
 uint8_t ddpSequence = 1;
@@ -290,6 +293,7 @@ void loadConfiguration() {
   wifiSsid = preferences.getString("ssid", "");
   wifiPassword = preferences.getString("password", "");
   otaPassword = preferences.getString("otaPassword", "");
+  compatibilityApEnabled = preferences.getBool("compatAp", true);
   automaticUpdates = preferences.getBool("autoUpdate", false);
   const uint8_t savedBrightness =
       preferences.getUChar("brightness", kDefaultBrightness);
@@ -422,6 +426,14 @@ void sendText(int status, const String& text,
 bool otaAuthenticated() {
   return !otaPassword.isEmpty() &&
          server.authenticate(kOtaUsername, otaPassword.c_str());
+}
+
+bool otaAuthenticationRequired() {
+  return compatibilityApActive;
+}
+
+bool otaRequestAuthorized() {
+  return !otaAuthenticationRequired() || otaAuthenticated();
 }
 
 void sendOtaUnauthorized() {
@@ -1298,7 +1310,10 @@ void sendStatusJson() {
   document["patternRunning"] = activePattern.running;
   JsonObject wifi = document["wifi"].to<JsonObject>();
   wifi["apSsid"] = kAccessPointName;
-  wifi["apIp"] = WiFi.softAPIP().toString();
+  wifi["apIp"] = compatibilityApActive ? WiFi.softAPIP().toString() : String();
+  wifi["compatibilityApEnabled"] = compatibilityApEnabled;
+  wifi["compatibilityApActive"] = compatibilityApActive;
+  wifi["compatibilityApFallback"] = compatibilityApFallback;
   wifi["ssid"] = wifiSsid;
   wifi["connected"] = WiFi.status() == WL_CONNECTED;
   wifi["lanIp"] = WiFi.status() == WL_CONNECTED
@@ -1312,6 +1327,7 @@ void sendStatusJson() {
   sync["status"] = lastDdpStatus;
   JsonObject ota = document["ota"].to<JsonObject>();
   ota["configured"] = !otaPassword.isEmpty();
+  ota["authenticationRequired"] = otaAuthenticationRequired();
   ota["maxImageBytes"] = ESP.getFreeSketchSpace();
   ota["automaticUpdates"] = automaticUpdates;
   ota["automaticUpdateStatus"] = automaticUpdateStatus;
@@ -1389,8 +1405,36 @@ void handleWebNetwork() {
     sendText(400, "Missing Wi-Fi name");
     return;
   }
-  saveNetwork(server.arg("ssid"), server.arg("password"));
-  sendText(200, "Wi-Fi saved; rebooting in 1.5 seconds");
+  const String requestedSsid = server.arg("ssid");
+  const String requestedPassword = server.arg("password");
+  const bool requestedCompatibilityAp =
+      server.hasArg("compatibilityApEnabled");
+  if (requestedCompatibilityAp != compatibilityApEnabled &&
+      !otaRequestAuthorized()) {
+    sendOtaUnauthorized();
+    return;
+  }
+  if (!requestedCompatibilityAp && requestedSsid.isEmpty()) {
+    sendText(400, "Configure home Wi-Fi before disabling the compatibility network");
+    return;
+  }
+  if (requestedSsid != wifiSsid || !requestedPassword.isEmpty()) {
+    saveNetwork(requestedSsid, requestedPassword);
+  }
+  compatibilityApEnabled = requestedCompatibilityAp;
+  preferences.putBool("compatAp", compatibilityApEnabled);
+  sendText(200, compatibilityApEnabled
+                    ? "Wi-Fi saved; compatibility network enabled; rebooting"
+                    : "Wi-Fi saved; compatibility network disabled; rebooting");
+  scheduleRestart();
+}
+
+void handleRestart() {
+  if (!otaRequestAuthorized()) {
+    sendOtaUnauthorized();
+    return;
+  }
+  sendText(200, "Controller is restarting");
   scheduleRestart();
 }
 
@@ -1434,7 +1478,7 @@ void handleWledSyncConfiguration() {
 }
 
 void handleOtaPasswordConfiguration() {
-  if (!otaPassword.isEmpty() && !otaAuthenticated()) {
+  if (!otaPassword.isEmpty() && !otaRequestAuthorized()) {
     sendOtaUnauthorized();
     return;
   }
@@ -1452,7 +1496,7 @@ void handleOtaPasswordConfiguration() {
 void handleFirmwareUpload() {
   HTTPUpload& upload = server.upload();
   if (upload.status == UPLOAD_FILE_START) {
-    otaUploadAuthorized = otaAuthenticated();
+    otaUploadAuthorized = otaRequestAuthorized();
     otaUploadSucceeded = false;
     otaUploadError = "";
     if (!otaUploadAuthorized) {
@@ -1490,7 +1534,7 @@ void handleFirmwareUpload() {
 }
 
 void handleFirmwareUploadComplete() {
-  if (!otaAuthenticated()) {
+  if (!otaRequestAuthorized()) {
     sendOtaUnauthorized();
     return;
   }
@@ -1534,7 +1578,7 @@ void handleGithubReleases() {
 }
 
 void handleInstallGithubRelease() {
-  if (!otaAuthenticated()) {
+  if (!otaRequestAuthorized()) {
     sendOtaUnauthorized();
     return;
   }
@@ -1555,7 +1599,7 @@ void handleInstallGithubRelease() {
 }
 
 void handleAutomaticUpdateConfiguration() {
-  if (!otaAuthenticated()) {
+  if (!otaRequestAuthorized()) {
     sendOtaUnauthorized();
     return;
   }
@@ -1779,6 +1823,7 @@ void configureWebServer() {
   });
   server.on("/api/zones", HTTP_POST, handleWebZones);
   server.on("/api/network", HTTP_POST, handleWebNetwork);
+  server.on("/api/restart", HTTP_POST, handleRestart);
   server.on("/api/wled-sync", HTTP_POST, handleWledSyncConfiguration);
   server.on("/api/update-password", HTTP_POST,
             handleOtaPasswordConfiguration);
@@ -1801,10 +1846,12 @@ void configureWebServer() {
 }
 
 void configureWifi() {
-  WiFi.mode(WIFI_AP_STA);
+  WiFi.mode(compatibilityApEnabled ? WIFI_AP_STA : WIFI_STA);
   WiFi.setAutoReconnect(true);
-  WiFi.softAPConfig(kAccessPointIp, kAccessPointIp, kAccessPointMask);
-  WiFi.softAP(kAccessPointName);
+  if (compatibilityApEnabled) {
+    WiFi.softAPConfig(kAccessPointIp, kAccessPointIp, kAccessPointMask);
+    compatibilityApActive = WiFi.softAP(kAccessPointName);
+  }
 
   if (!wifiSsid.isEmpty()) {
     WiFi.begin(wifiSsid.c_str(), wifiPassword.c_str());
@@ -1819,6 +1866,13 @@ void configureWifi() {
       WiFi.setAutoReconnect(false);
       WiFi.disconnect(false, false);
     }
+  }
+
+  if (!compatibilityApEnabled && WiFi.status() != WL_CONNECTED) {
+    WiFi.mode(WIFI_AP_STA);
+    WiFi.softAPConfig(kAccessPointIp, kAccessPointIp, kAccessPointMask);
+    compatibilityApActive = WiFi.softAP(kAccessPointName);
+    compatibilityApFallback = compatibilityApActive;
   }
 
   if (WiFi.status() == WL_CONNECTED && MDNS.begin("leaflights")) {
@@ -1889,8 +1943,13 @@ void setup() {
                               : "Automatic updates disabled";
 
   Serial.println("LeafFilter/Oelo UCS1903 test controller ready");
-  Serial.printf("Setup AP: %s at http://%s\n", kAccessPointName,
-                WiFi.softAPIP().toString().c_str());
+  if (compatibilityApActive) {
+    Serial.printf("%sAP: %s at http://%s\n",
+                  compatibilityApFallback ? "Recovery " : "Setup ",
+                  kAccessPointName, WiFi.softAPIP().toString().c_str());
+  } else {
+    Serial.println("Compatibility AP disabled");
+  }
   if (WiFi.status() == WL_CONNECTED) {
     Serial.printf("LAN: http://%s or http://leaflights.local\n",
                   WiFi.localIP().toString().c_str());
