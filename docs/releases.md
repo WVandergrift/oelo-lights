@@ -35,8 +35,7 @@ metadata.
 2. Open **Settings → Firmware updates**.
 3. Press **Check now** if the list has not loaded.
 4. Read the notes shown inside the desired release card.
-5. Enter the update password if the open compatibility network is active, then
-   choose **Install**.
+5. Choose **Install**. The current web session authorizes the operation.
 
 The controller obtains release metadata from the public GitHub API, then
 downloads the selected `leaf-lights-tinys3.bin`. It validates TLS, repository
@@ -45,9 +44,8 @@ inactive OTA slot for the next boot.
 
 ## Automatic updates
 
-Automatic updates are disabled by default. To enable them, enter the update
-password if requested, select **Automatically install stable updates**, and
-save.
+Automatic updates are disabled by default. To enable them, select
+**Automatically install stable updates** and save.
 
 The controller waits one minute after boot, then checks every six hours while
 home Wi-Fi is connected. It ignores drafts and prereleases and installs only a

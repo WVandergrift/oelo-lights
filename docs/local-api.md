@@ -96,6 +96,10 @@ The sample's own web UI additionally uses:
 
 ```text
 GET  /api/status
+GET  /api/auth-status
+POST /api/login
+POST /api/setup
+POST /api/web-password
 GET  /api/color
 GET  /api/brightness?value=<1-204>
 GET  /api/off
@@ -105,7 +109,6 @@ POST /api/zones
 POST /api/network
 POST /api/restart
 POST /api/wled-sync
-POST /api/update-password
 POST /api/update
 GET  /api/releases
 POST /api/install-release
@@ -116,9 +119,14 @@ POST /api/automatic-updates
 `pixelCount`, and `sourceZone`. A source of `-1` automatically uses the first
 zone in the active pattern. These settings are stored in NVS.
 
-`POST /api/update-password` configures the password used for remote firmware
-updates. Once configured, changing it requires HTTP Basic authentication with
-username `leaflights` and the current password.
+`GET /api/auth-status` reports whether the optional web login is configured and
+whether the current browser session is authenticated. `POST /api/login`
+accepts `password` and returns a persistent HttpOnly, SameSite session cookie.
+
+`POST /api/setup` completes first-time onboarding. It accepts six zone records,
+home Wi-Fi credentials, optional compatibility-network settings, and the
+optional web password. `POST /api/web-password` changes or removes that web
+login from an authenticated session.
 
 `POST /api/network` stores home-network settings, the optional
 `compatibilityApEnabled` flag, and an optional 8–63-character
@@ -133,10 +141,8 @@ recovery AP rather than leaving the controller unreachable.
 streamed to the inactive OTA slot, verified by the ESP32 Update library,
 activated, and followed by a controlled reboot.
 
-Firmware upload, release installation, automatic-update configuration, and
-restart require HTTP Basic authentication whenever the compatibility or
-recovery AP is active. Authentication is optional when the controller is
-reachable only through home Wi-Fi.
+Project management endpoints use the optional web-interface session. No
+separate firmware-update password or HTTP Basic prompt is used.
 
 `GET /api/releases` retrieves the five newest public GitHub releases through a
 certificate-validated connection and returns only compatible

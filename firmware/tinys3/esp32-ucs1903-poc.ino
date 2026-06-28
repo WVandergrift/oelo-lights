@@ -38,11 +38,12 @@ constexpr uint8_t kMaxPatternColors = 128;
 constexpr uint16_t kPatternLibraryVersion = 1;
 constexpr char kAccessPointName[] = "OELO_1-23.0";
 constexpr char kDefaultCompatibilityApPassword[] = "LeafLights-Test";
+constexpr char kSetupAccessPointName[] = "LeafLights-Setup";
+constexpr char kSetupAccessPointPassword[] = "LeafLights-Setup";
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "0.5.4-dev"
+#define FIRMWARE_VERSION "0.6.0-dev"
 #endif
 constexpr char kFirmwareVersion[] = FIRMWARE_VERSION;
-constexpr char kOtaUsername[] = "leaflights";
 constexpr char kGithubApiUrl[] =
     "https://api.github.com/repos/WVandergrift/oelo-lights/releases?per_page=5";
 constexpr char kGithubDownloadPrefix[] =
@@ -139,11 +140,15 @@ WiFiUDP ddpUdp;
 String wifiSsid;
 String wifiPassword;
 String chipId;
-String otaPassword;
 String compatibilityApPassword;
-bool compatibilityApEnabled = true;
+String webPasswordSalt;
+String webPasswordHash;
+String webSessionToken;
+bool setupComplete = false;
+bool compatibilityApEnabled = false;
 bool compatibilityApActive = false;
 bool compatibilityApFallback = false;
+bool setupApActive = false;
 uint32_t restartAt = 0;
 WledSyncConfig wledSync;
 uint8_t ddpSequence = 1;
@@ -157,6 +162,7 @@ uint32_t nextAutomaticUpdateAt = 0;
 String automaticUpdateStatus = "Automatic updates disabled";
 
 void sendDdpFrame(bool force = false);
+void saveNetwork(const String& ssid, const String& password);
 
 const char kSeedPatterns[] PROGMEM = R"JSON([
   {
@@ -294,7 +300,17 @@ void loadConfiguration() {
   preferences.begin("leaflights", false);
   wifiSsid = preferences.getString("ssid", "");
   wifiPassword = preferences.getString("password", "");
-  otaPassword = preferences.getString("otaPassword", "");
+  const bool legacyInstallation =
+      preferences.isKey("compatAp") || preferences.isKey("cnt0") ||
+      preferences.isKey("otaPassword") || preferences.isKey("ssid") ||
+      preferences.isKey("patternLibrary");
+  setupComplete = preferences.getBool("setupDone", legacyInstallation);
+  if (!preferences.isKey("setupDone")) {
+    preferences.putBool("setupDone", setupComplete);
+  }
+  webPasswordSalt = preferences.getString("webSalt", "");
+  webPasswordHash = preferences.getString("webHash", "");
+  webSessionToken = preferences.getString("webToken", "");
   compatibilityApPassword = preferences.getString(
       "compatPw", kDefaultCompatibilityApPassword);
   if (compatibilityApPassword.length() < 8 ||
@@ -302,7 +318,7 @@ void loadConfiguration() {
     compatibilityApPassword = kDefaultCompatibilityApPassword;
     preferences.putString("compatPw", compatibilityApPassword);
   }
-  compatibilityApEnabled = preferences.getBool("compatAp", true);
+  compatibilityApEnabled = preferences.getBool("compatAp", false);
   automaticUpdates = preferences.getBool("autoUpdate", false);
   const uint8_t savedBrightness =
       preferences.getUChar("brightness", kDefaultBrightness);
@@ -432,32 +448,101 @@ void sendText(int status, const String& text,
   server.send(status, contentType, text);
 }
 
-bool otaAuthenticated() {
-  return !otaPassword.isEmpty() &&
-         server.authenticate(kOtaUsername, otaPassword.c_str());
+String randomHex(size_t bytes) {
+  static const char digits[] = "0123456789abcdef";
+  String output;
+  output.reserve(bytes * 2);
+  for (size_t i = 0; i < bytes; ++i) {
+    const uint8_t value = static_cast<uint8_t>(esp_random());
+    output += digits[value >> 4];
+    output += digits[value & 0x0f];
+  }
+  return output;
 }
 
-bool otaAuthenticationRequired() {
-  return compatibilityApActive;
+String sha256Hex(const String& value) {
+  uint8_t hash[32];
+  mbedtls_sha256_context context;
+  mbedtls_sha256_init(&context);
+  mbedtls_sha256_starts_ret(&context, 0);
+  mbedtls_sha256_update_ret(
+      &context, reinterpret_cast<const uint8_t*>(value.c_str()),
+      value.length());
+  mbedtls_sha256_finish_ret(&context, hash);
+  mbedtls_sha256_free(&context);
+  char output[65];
+  for (uint8_t i = 0; i < sizeof(hash); ++i) {
+    snprintf(output + i * 2, 3, "%02x", hash[i]);
+  }
+  output[64] = '\0';
+  return String(output);
+}
+
+bool validWebPassword(const String& password) {
+  return password.length() >= 8 && password.length() <= 64;
+}
+
+bool webPasswordConfigured() {
+  return webPasswordSalt.length() == 32 && webPasswordHash.length() == 64;
+}
+
+bool webUiAuthorized() {
+  if (!webPasswordConfigured()) return true;
+  if (webSessionToken.isEmpty() || !server.hasHeader("Cookie")) return false;
+  const String expected = String("leaf_session=") + webSessionToken;
+  return server.header("Cookie").indexOf(expected) >= 0;
+}
+
+bool requireWebUiAuth() {
+  if (webUiAuthorized()) return true;
+  sendText(401, "Web UI login required");
+  return false;
+}
+
+bool requestFromCompatibilityNetwork() {
+  if (!compatibilityApActive) return false;
+  const IPAddress remote = server.client().remoteIP();
+  return remote[0] == kAccessPointIp[0] &&
+         remote[1] == kAccessPointIp[1] &&
+         remote[2] == kAccessPointIp[2];
+}
+
+bool requireLegacyAccess() {
+  if (requestFromCompatibilityNetwork() || webUiAuthorized()) return true;
+  sendText(401, "Web UI login required");
+  return false;
 }
 
 bool otaRequestAuthorized() {
-  return !otaAuthenticationRequired() || otaAuthenticated();
+  return webUiAuthorized();
 }
 
 void sendOtaUnauthorized() {
-  server.sendHeader("WWW-Authenticate",
-                    "Basic realm=\"Leaf Lights firmware update\"");
-  sendText(401, "Firmware update password required");
+  sendText(401, "Web UI login required");
 }
 
-bool validOtaPassword(const String& password) {
-  if (password.length() < 10 || password.length() > 64) return false;
-  for (size_t i = 0; i < password.length(); ++i) {
-    const char value = password[i];
-    if (value < 33 || value > 126 || value == ':') return false;
-  }
-  return true;
+void setWebPassword(const String& password) {
+  webPasswordSalt = randomHex(16);
+  webPasswordHash = sha256Hex(webPasswordSalt + password);
+  webSessionToken = randomHex(24);
+  preferences.putString("webSalt", webPasswordSalt);
+  preferences.putString("webHash", webPasswordHash);
+  preferences.putString("webToken", webSessionToken);
+}
+
+void clearWebPassword() {
+  webPasswordSalt = "";
+  webPasswordHash = "";
+  webSessionToken = "";
+  preferences.remove("webSalt");
+  preferences.remove("webHash");
+  preferences.remove("webToken");
+}
+
+void sendSessionCookie() {
+  server.sendHeader(
+      "Set-Cookie", String("leaf_session=") + webSessionToken +
+                        "; Path=/; Max-Age=31536000; HttpOnly; SameSite=Strict");
 }
 
 void scheduleRestart() {
@@ -1302,8 +1387,129 @@ void startFastFireworks(uint8_t zoneMask) {
   startPattern("twinkle", zoneMask, colors, 6, 10, 0, true, 0, 0);
 }
 
+void handleAuthStatus() {
+  JsonDocument document;
+  document["passwordRequired"] = webPasswordConfigured();
+  document["authenticated"] = webUiAuthorized();
+  document["setupComplete"] = setupComplete;
+  String response;
+  serializeJson(document, response);
+  sendText(200, response, "application/json");
+}
+
+void handleWebLogin() {
+  if (!webPasswordConfigured()) {
+    sendText(200, "Web UI password is not enabled");
+    return;
+  }
+  const String password = server.arg("password");
+  if (sha256Hex(webPasswordSalt + password) != webPasswordHash) {
+    sendText(401, "Incorrect password");
+    return;
+  }
+  if (webSessionToken.isEmpty()) {
+    webSessionToken = randomHex(24);
+    preferences.putString("webToken", webSessionToken);
+  }
+  sendSessionCookie();
+  sendText(200, "Signed in");
+}
+
+void handleWebPasswordConfiguration() {
+  if (!requireWebUiAuth()) return;
+  if (server.arg("enabled") != "1") {
+    clearWebPassword();
+    server.sendHeader(
+        "Set-Cookie",
+        "leaf_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict");
+    sendText(200, "Web UI password removed");
+    return;
+  }
+  const String password = server.arg("password");
+  if (!validWebPassword(password)) {
+    sendText(400, "Web UI password must be 8-64 characters");
+    return;
+  }
+  setWebPassword(password);
+  sendSessionCookie();
+  sendText(200, "Web UI password saved; this browser is signed in");
+}
+
+void handleSetupWizard() {
+  if (setupComplete && !requireWebUiAuth()) return;
+
+  for (uint8_t i = 0; i < kZoneCount; ++i) {
+    zones[i].enabled = server.hasArg(preferenceKey("wen", i));
+    zones[i].count = constrain(
+        server.arg(preferenceKey("wcnt", i)).toInt(), 1, kMaxLogicalLeds);
+    zones[i].name =
+        server.arg(preferenceKey("wname", i)).substring(0, 24);
+    const String order = server.arg(preferenceKey("word", i));
+    zones[i].order = validColorOrder(order) ? order : "GBR";
+  }
+
+  const String requestedSsid = server.arg("ssid");
+  const String requestedWifiPassword = server.arg("wifiPassword");
+  const bool requestedCompatibility = server.hasArg("compatibilityEnabled");
+  String requestedCompatibilityPassword =
+      server.arg("compatibilityPassword");
+  requestedCompatibilityPassword.trim();
+
+  if (!requestedCompatibility && requestedSsid.isEmpty()) {
+    sendText(400, "Configure home Wi-Fi or enable the compatibility network");
+    return;
+  }
+  if (requestedCompatibility && requestedCompatibilityPassword.isEmpty() &&
+      (!setupComplete || compatibilityApPassword.isEmpty())) {
+    sendText(400, "Choose a compatibility Wi-Fi password");
+    return;
+  }
+  if (!requestedCompatibilityPassword.isEmpty() &&
+      (requestedCompatibilityPassword.length() < 8 ||
+       requestedCompatibilityPassword.length() > 63)) {
+    sendText(400, "Compatibility Wi-Fi password must be 8-63 characters");
+    return;
+  }
+
+  const bool protectWebUi = server.hasArg("protectWebUi");
+  const String requestedWebPassword = server.arg("webPassword");
+  if (protectWebUi && requestedWebPassword.isEmpty() &&
+      !webPasswordConfigured()) {
+    sendText(400, "Choose a web UI password or leave protection disabled");
+    return;
+  }
+  if (protectWebUi && !requestedWebPassword.isEmpty() &&
+      !validWebPassword(requestedWebPassword)) {
+    sendText(400, "Web UI password must be 8-64 characters");
+    return;
+  }
+
+  saveZoneConfiguration();
+  if (requestedSsid != wifiSsid || !requestedWifiPassword.isEmpty()) {
+    saveNetwork(requestedSsid, requestedWifiPassword);
+  }
+  compatibilityApEnabled = requestedCompatibility;
+  preferences.putBool("compatAp", compatibilityApEnabled);
+  if (!requestedCompatibilityPassword.isEmpty()) {
+    compatibilityApPassword = requestedCompatibilityPassword;
+    preferences.putString("compatPw", compatibilityApPassword);
+  }
+  setupComplete = true;
+  preferences.putBool("setupDone", true);
+
+  if (protectWebUi && !requestedWebPassword.isEmpty()) {
+    setWebPassword(requestedWebPassword);
+    sendSessionCookie();
+  } else if (!protectWebUi) {
+    clearWebPassword();
+  }
+  sendText(200, "Setup saved; controller is restarting");
+  scheduleRestart();
+}
+
 void sendStatusJson() {
   JsonDocument document;
+  document["setupComplete"] = setupComplete;
   document["chipId"] = chipId;
   document["firmwareVersion"] = kFirmwareVersion;
   document["buildDate"] = __DATE__ " " __TIME__;
@@ -1318,8 +1524,10 @@ void sendStatusJson() {
   document["activePattern"] = activePattern.type;
   document["patternRunning"] = activePattern.running;
   JsonObject wifi = document["wifi"].to<JsonObject>();
-  wifi["apSsid"] = kAccessPointName;
-  wifi["apIp"] = compatibilityApActive ? WiFi.softAPIP().toString() : String();
+  wifi["apSsid"] = setupApActive ? kSetupAccessPointName : kAccessPointName;
+  wifi["apIp"] = (compatibilityApActive || setupApActive)
+                       ? WiFi.softAPIP().toString()
+                       : String();
   wifi["compatibilityApEnabled"] = compatibilityApEnabled;
   wifi["compatibilityApActive"] = compatibilityApActive;
   wifi["compatibilityApFallback"] = compatibilityApFallback;
@@ -1336,11 +1544,12 @@ void sendStatusJson() {
   sync["sourceZone"] = wledSync.sourceZone;
   sync["status"] = lastDdpStatus;
   JsonObject ota = document["ota"].to<JsonObject>();
-  ota["configured"] = !otaPassword.isEmpty();
-  ota["authenticationRequired"] = otaAuthenticationRequired();
   ota["maxImageBytes"] = ESP.getFreeSketchSpace();
   ota["automaticUpdates"] = automaticUpdates;
   ota["automaticUpdateStatus"] = automaticUpdateStatus;
+  JsonObject webAccess = document["webAccess"].to<JsonObject>();
+  webAccess["passwordConfigured"] = webPasswordConfigured();
+  webAccess["authenticated"] = webUiAuthorized();
   JsonArray outputZones = document["zones"].to<JsonArray>();
   for (uint8_t i = 0; i < kZoneCount; ++i) {
     JsonObject zone = outputZones.add<JsonObject>();
@@ -1503,22 +1712,6 @@ void handleWledSyncConfiguration() {
                                  : "WLED realtime sync disabled");
 }
 
-void handleOtaPasswordConfiguration() {
-  if (!otaPassword.isEmpty() && !otaRequestAuthorized()) {
-    sendOtaUnauthorized();
-    return;
-  }
-  const String newPassword = server.arg("newPassword");
-  if (!validOtaPassword(newPassword)) {
-    sendText(400,
-             "Use 10-64 printable ASCII characters without spaces or colons");
-    return;
-  }
-  otaPassword = newPassword;
-  preferences.putString("otaPassword", otaPassword);
-  sendText(200, "Firmware update password saved");
-}
-
 void handleFirmwareUpload() {
   HTTPUpload& upload = server.upload();
   if (upload.status == UPLOAD_FILE_START) {
@@ -1526,7 +1719,7 @@ void handleFirmwareUpload() {
     otaUploadSucceeded = false;
     otaUploadError = "";
     if (!otaUploadAuthorized) {
-      otaUploadError = "Firmware update password required";
+      otaUploadError = "Web UI login required";
       return;
     }
     String filename = upload.filename;
@@ -1816,30 +2009,60 @@ void handleSavePatternsBody() {
 }
 
 void configureWebServer() {
+  const char* headerKeys[] = {"Cookie"};
+  server.collectHeaders(headerKeys, 1);
   server.on("/", HTTP_GET, []() {
     addCorsHeaders();
     server.send_P(200, "text/html", WEB_UI);
   });
-  server.on("/getController", HTTP_GET, sendControllerJson);
-  server.on("/saveController", HTTP_GET, handleSaveController);
-  server.on("/setPattern", HTTP_GET, handleSetPattern);
-  server.on("/getPatterns", HTTP_GET, handleGetPatterns);
-  server.on("/savePatterns", HTTP_GET, handleSavePatterns);
-  server.on("/api/patterns", HTTP_POST, handleSavePatternsBody);
-  server.on("/scanNetworksRSSI", HTTP_GET, handleScanNetworks);
+  server.on("/getController", HTTP_GET, []() {
+    if (requireLegacyAccess()) sendControllerJson();
+  });
+  server.on("/saveController", HTTP_GET, []() {
+    if (requireLegacyAccess()) handleSaveController();
+  });
+  server.on("/setPattern", HTTP_GET, []() {
+    if (requireLegacyAccess()) handleSetPattern();
+  });
+  server.on("/getPatterns", HTTP_GET, []() {
+    if (requireLegacyAccess()) handleGetPatterns();
+  });
+  server.on("/savePatterns", HTTP_GET, []() {
+    if (requireLegacyAccess()) handleSavePatterns();
+  });
+  server.on("/api/patterns", HTTP_POST, []() {
+    if (requireWebUiAuth()) handleSavePatternsBody();
+  });
+  server.on("/scanNetworksRSSI", HTTP_GET, []() {
+    if (requireLegacyAccess()) handleScanNetworks();
+  });
   server.on("/saveNetwork", HTTP_GET, []() {
+    if (!requireLegacyAccess()) return;
     saveNetwork(server.arg("ssid"), server.arg("pw"));
     sendText(200, "Network saved; rebooting");
     scheduleRestart();
   });
-  server.on("/api/status", HTTP_GET, sendStatusJson);
-  server.on("/api/color", HTTP_GET, handleApiColor);
-  server.on("/api/brightness", HTTP_GET, handleBrightness);
+  server.on("/api/auth-status", HTTP_GET, handleAuthStatus);
+  server.on("/api/login", HTTP_POST, handleWebLogin);
+  server.on("/api/setup", HTTP_POST, handleSetupWizard);
+  server.on("/api/web-password", HTTP_POST,
+            handleWebPasswordConfiguration);
+  server.on("/api/status", HTTP_GET, []() {
+    if (requireWebUiAuth()) sendStatusJson();
+  });
+  server.on("/api/color", HTTP_GET, []() {
+    if (requireWebUiAuth()) handleApiColor();
+  });
+  server.on("/api/brightness", HTTP_GET, []() {
+    if (requireWebUiAuth()) handleBrightness();
+  });
   server.on("/api/off", HTTP_GET, []() {
+    if (!requireWebUiAuth()) return;
     allOff();
     sendText(200, "All zones off");
   });
   server.on("/api/preset/fast-fireworks", HTTP_GET, []() {
+    if (!requireWebUiAuth()) return;
     uint8_t mask = 0;
     for (uint8_t zone = 0; zone < kZoneCount; ++zone) {
       if (zoneRegistered[zone]) mask |= 1U << zone;
@@ -1847,15 +2070,23 @@ void configureWebServer() {
     startFastFireworks(mask);
     sendText(200, "Fourth of July: Fast Fireworks running");
   });
-  server.on("/api/zones", HTTP_POST, handleWebZones);
-  server.on("/api/network", HTTP_POST, handleWebNetwork);
-  server.on("/api/restart", HTTP_POST, handleRestart);
-  server.on("/api/wled-sync", HTTP_POST, handleWledSyncConfiguration);
-  server.on("/api/update-password", HTTP_POST,
-            handleOtaPasswordConfiguration);
+  server.on("/api/zones", HTTP_POST, []() {
+    if (requireWebUiAuth()) handleWebZones();
+  });
+  server.on("/api/network", HTTP_POST, []() {
+    if (requireWebUiAuth()) handleWebNetwork();
+  });
+  server.on("/api/restart", HTTP_POST, []() {
+    if (requireWebUiAuth()) handleRestart();
+  });
+  server.on("/api/wled-sync", HTTP_POST, []() {
+    if (requireWebUiAuth()) handleWledSyncConfiguration();
+  });
   server.on("/api/update", HTTP_POST, handleFirmwareUploadComplete,
             handleFirmwareUpload);
-  server.on("/api/releases", HTTP_GET, handleGithubReleases);
+  server.on("/api/releases", HTTP_GET, []() {
+    if (requireWebUiAuth()) handleGithubReleases();
+  });
   server.on("/api/install-release", HTTP_POST,
             handleInstallGithubRelease);
   server.on("/api/automatic-updates", HTTP_POST,
@@ -1872,9 +2103,15 @@ void configureWebServer() {
 }
 
 void configureWifi() {
-  WiFi.mode(compatibilityApEnabled ? WIFI_AP_STA : WIFI_STA);
+  const bool startConfiguredAp = setupComplete && compatibilityApEnabled;
+  const bool startSetupAp = !setupComplete;
+  WiFi.mode((startConfiguredAp || startSetupAp) ? WIFI_AP_STA : WIFI_STA);
   WiFi.setAutoReconnect(true);
-  if (compatibilityApEnabled) {
+  if (startSetupAp) {
+    WiFi.softAPConfig(kAccessPointIp, kAccessPointIp, kAccessPointMask);
+    setupApActive = WiFi.softAP(
+        kSetupAccessPointName, kSetupAccessPointPassword);
+  } else if (startConfiguredAp) {
     WiFi.softAPConfig(kAccessPointIp, kAccessPointIp, kAccessPointMask);
     compatibilityApActive = WiFi.softAP(
         kAccessPointName, compatibilityApPassword.c_str());
@@ -1895,12 +2132,13 @@ void configureWifi() {
     }
   }
 
-  if (!compatibilityApEnabled && WiFi.status() != WL_CONNECTED) {
+  if (setupComplete && !compatibilityApEnabled &&
+      WiFi.status() != WL_CONNECTED) {
     WiFi.mode(WIFI_AP_STA);
     WiFi.softAPConfig(kAccessPointIp, kAccessPointIp, kAccessPointMask);
-    compatibilityApActive = WiFi.softAP(
-        kAccessPointName, compatibilityApPassword.c_str());
-    compatibilityApFallback = compatibilityApActive;
+    setupApActive = WiFi.softAP(
+        kSetupAccessPointName, kSetupAccessPointPassword);
+    compatibilityApFallback = setupApActive;
   }
 
   if (WiFi.status() == WL_CONNECTED && MDNS.begin("leaflights")) {
@@ -1971,7 +2209,11 @@ void setup() {
                               : "Automatic updates disabled";
 
   Serial.println("LeafFilter/Oelo UCS1903 test controller ready");
-  if (compatibilityApActive) {
+  if (setupApActive) {
+    Serial.printf("%sAP: %s at http://%s\n",
+                  compatibilityApFallback ? "Recovery " : "Setup ",
+                  kSetupAccessPointName, WiFi.softAPIP().toString().c_str());
+  } else if (compatibilityApActive) {
     Serial.printf("%sAP: %s at http://%s\n",
                   compatibilityApFallback ? "Recovery " : "Setup ",
                   kAccessPointName, WiFi.softAPIP().toString().c_str());

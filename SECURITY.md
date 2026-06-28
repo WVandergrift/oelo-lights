@@ -3,7 +3,7 @@
 ## Local AP compatibility
 
 The vendor app hard-codes a Wi-Fi access point named `OELO_1-23.0` and the
-controller address `172.24.1.1`. Release v0.5.4 experimentally protects that
+controller address `172.24.1.1`. The replacement firmware protects that
 network with WPA2 while retaining the expected name and address.
 
 Consequences:
@@ -19,17 +19,18 @@ Do not port-forward it or expose it directly to the internet.
 
 ## Firmware updates
 
-Remote firmware updates are disabled until a separate update password is
-configured. The OTA endpoint requires HTTP Basic authentication and writes only
-to the ESP32's inactive application slot before verification and reboot.
+Firmware updates use the same optional web-interface session as settings and
+restart. Without a web password, anyone already admitted to the home or WPA2
+compatibility network can use management functions. With a web password, the
+firmware stores a salted SHA-256 verifier and issues a persistent HttpOnly,
+SameSite session cookie after login. Local HTTP is not encrypted, so do not
+expose the controller to the internet. Upload only firmware built for the
+TinyS3 target. USB remains the recovery path for invalid partition or
+bootloader images.
 
-Basic authentication protects the operation from unauthenticated clients, but
-it does not encrypt traffic. Configure updates from a trusted local network,
-use a unique password, and never expose the controller's HTTP server to the
-internet. Upload only `firmware.bin` built for the TinyS3 target in this
-repository. A power failure during update should leave the active image intact,
-but USB access remains the recovery path for invalid partition or bootloader
-images.
+Legacy LeafFilter endpoints remain unauthenticated only for requests arriving
+through the WPA2 compatibility interface. Requests to those endpoints from the
+home LAN use the optional web session.
 
 GitHub release installs add three checks before ESP32 image validation:
 
@@ -40,8 +41,8 @@ GitHub release installs add three checks before ESP32 image validation:
   metadata.
 
 The embedded trust anchors must be reviewed if GitHub changes certificate
-chains. Automatic updates are disabled by default, require the update password
-to enable, ignore prereleases, and only advance to a higher semantic version.
+chains. Automatic updates are disabled by default, ignore prereleases, and only
+advance to a higher semantic version.
 
 ## Electrical safety
 

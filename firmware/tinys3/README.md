@@ -93,12 +93,18 @@ LittleFS. When home Wi-Fi is configured, the same page is available at the
 displayed LAN address and, where mDNS is supported,
 `http://leaflights.local`.
 
-The WPA2-protected `OELO_1-23.0` network can be disabled or given a new
-8–63-character password under **Settings → Network** after home Wi-Fi is
-configured. The v0.5.4 experimental default is `LeafLights-Test`. If the saved
-home network fails at boot, the controller temporarily restores the same
-protected network for recovery. Firmware updates and device restarts retain
-the separate update-password requirement while app compatibility is tested.
+Fresh controllers start the four-step onboarding wizard on the temporary
+`LeafLights-Setup` network (password `LeafLights-Setup`). The wizard configures
+zones, home Wi-Fi, optional Oelo compatibility, and an optional web-interface
+password. Compatibility defaults off. Completing setup removes the temporary
+network.
+
+The WPA2-protected `OELO_1-23.0` network can later be disabled or given a new
+8–63-character password under **Settings → Network**. If home Wi-Fi fails while
+compatibility is disabled, the controller temporarily restores the protected
+setup network for recovery. Existing installations upgrading from an earlier
+release are marked configured automatically and can rerun onboarding from
+**Settings → Device**.
 
 The Android app contains WPA2-capable connection code but passes an empty
 password when it requests `OELO_1-23.0`. For this experiment, join the network
@@ -164,28 +170,22 @@ application slots. The browser can therefore write a new image to the inactive
 slot without overwriting the running firmware.
 
 1. Open **Settings → Firmware updates**.
-2. If the open Oelo/LeafFilter compatibility network is active, configure an
-   update password of 10–64 printable ASCII characters. Authentication is
-   optional while the controller is reachable only through home Wi-Fi.
-3. Build the firmware with `pio run -e um_tinys3`.
-4. Select `.pio/build/um_tinys3/firmware.bin`, enter the update password when
-   requested, and upload it.
-5. Keep the controller powered until the browser reports that verification
+2. Build the firmware with `pio run -e um_tinys3`.
+3. Select `.pio/build/um_tinys3/firmware.bin` and upload it.
+4. Keep the controller powered until the browser reports that verification
    completed. The controller then reboots into the new slot.
 
-The update endpoint uses HTTP Basic authentication. This prevents casual or
-unauthenticated flashing through the open compatibility AP, but the connection
-is still plain local HTTP. Do not expose the controller to the internet and do
-not reuse an important password. If both OTA images become invalid, recover by
-flashing over USB.
+The update endpoint uses the current optional web-interface session. The
+connection remains plain local HTTP, so network admission through home Wi-Fi or
+WPA2 is the primary boundary. Do not expose the controller to the internet. If
+both OTA images become invalid, recover by flashing over USB.
 
 ### GitHub releases
 
 The firmware update panel can also retrieve releases directly from
 `WVandergrift/oelo-lights`. Each compatible release displays its release notes,
 version, size, and whether it is newer than the installed image. Installation
-requires the update password whenever the open compatibility or recovery
-network is active.
+uses the current browser session without another password prompt.
 
 The controller validates the GitHub HTTPS certificate, restricts the asset URL
 to this repository, and compares the downloaded image against the SHA-256
