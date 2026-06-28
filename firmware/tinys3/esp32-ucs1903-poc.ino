@@ -37,8 +37,9 @@ constexpr uint8_t kMaximumBrightness =
 constexpr uint8_t kMaxPatternColors = 128;
 constexpr uint16_t kPatternLibraryVersion = 1;
 constexpr char kAccessPointName[] = "OELO_1-23.0";
+constexpr char kDefaultCompatibilityApPassword[] = "LeafLights-Test";
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "0.5.3-dev"
+#define FIRMWARE_VERSION "0.5.4-dev"
 #endif
 constexpr char kFirmwareVersion[] = FIRMWARE_VERSION;
 constexpr char kOtaUsername[] = "leaflights";
@@ -139,6 +140,7 @@ String wifiSsid;
 String wifiPassword;
 String chipId;
 String otaPassword;
+String compatibilityApPassword;
 bool compatibilityApEnabled = true;
 bool compatibilityApActive = false;
 bool compatibilityApFallback = false;
@@ -293,6 +295,13 @@ void loadConfiguration() {
   wifiSsid = preferences.getString("ssid", "");
   wifiPassword = preferences.getString("password", "");
   otaPassword = preferences.getString("otaPassword", "");
+  compatibilityApPassword = preferences.getString(
+      "compatPw", kDefaultCompatibilityApPassword);
+  if (compatibilityApPassword.length() < 8 ||
+      compatibilityApPassword.length() > 63) {
+    compatibilityApPassword = kDefaultCompatibilityApPassword;
+    preferences.putString("compatPw", compatibilityApPassword);
+  }
   compatibilityApEnabled = preferences.getBool("compatAp", true);
   automaticUpdates = preferences.getBool("autoUpdate", false);
   const uint8_t savedBrightness =
@@ -1314,6 +1323,7 @@ void sendStatusJson() {
   wifi["compatibilityApEnabled"] = compatibilityApEnabled;
   wifi["compatibilityApActive"] = compatibilityApActive;
   wifi["compatibilityApFallback"] = compatibilityApFallback;
+  wifi["compatibilityApSecured"] = true;
   wifi["ssid"] = wifiSsid;
   wifi["connected"] = WiFi.status() == WL_CONNECTED;
   wifi["lanIp"] = WiFi.status() == WL_CONNECTED
@@ -1409,7 +1419,13 @@ void handleWebNetwork() {
   const String requestedPassword = server.arg("password");
   const bool requestedCompatibilityAp =
       server.hasArg("compatibilityApEnabled");
-  if (requestedCompatibilityAp != compatibilityApEnabled &&
+  String requestedCompatibilityPassword =
+      server.arg("compatibilityApPassword");
+  requestedCompatibilityPassword.trim();
+  const bool changingCompatibilityPassword =
+      !requestedCompatibilityPassword.isEmpty();
+  if ((requestedCompatibilityAp != compatibilityApEnabled ||
+       changingCompatibilityPassword) &&
       !otaRequestAuthorized()) {
     sendOtaUnauthorized();
     return;
@@ -1418,11 +1434,21 @@ void handleWebNetwork() {
     sendText(400, "Configure home Wi-Fi before disabling the compatibility network");
     return;
   }
+  if (changingCompatibilityPassword &&
+      (requestedCompatibilityPassword.length() < 8 ||
+       requestedCompatibilityPassword.length() > 63)) {
+    sendText(400, "Compatibility Wi-Fi password must be 8-63 characters");
+    return;
+  }
   if (requestedSsid != wifiSsid || !requestedPassword.isEmpty()) {
     saveNetwork(requestedSsid, requestedPassword);
   }
   compatibilityApEnabled = requestedCompatibilityAp;
   preferences.putBool("compatAp", compatibilityApEnabled);
+  if (changingCompatibilityPassword) {
+    compatibilityApPassword = requestedCompatibilityPassword;
+    preferences.putString("compatPw", compatibilityApPassword);
+  }
   sendText(200, compatibilityApEnabled
                     ? "Wi-Fi saved; compatibility network enabled; rebooting"
                     : "Wi-Fi saved; compatibility network disabled; rebooting");
@@ -1850,7 +1876,8 @@ void configureWifi() {
   WiFi.setAutoReconnect(true);
   if (compatibilityApEnabled) {
     WiFi.softAPConfig(kAccessPointIp, kAccessPointIp, kAccessPointMask);
-    compatibilityApActive = WiFi.softAP(kAccessPointName);
+    compatibilityApActive = WiFi.softAP(
+        kAccessPointName, compatibilityApPassword.c_str());
   }
 
   if (!wifiSsid.isEmpty()) {
@@ -1871,7 +1898,8 @@ void configureWifi() {
   if (!compatibilityApEnabled && WiFi.status() != WL_CONNECTED) {
     WiFi.mode(WIFI_AP_STA);
     WiFi.softAPConfig(kAccessPointIp, kAccessPointIp, kAccessPointMask);
-    compatibilityApActive = WiFi.softAP(kAccessPointName);
+    compatibilityApActive = WiFi.softAP(
+        kAccessPointName, compatibilityApPassword.c_str());
     compatibilityApFallback = compatibilityApActive;
   }
 

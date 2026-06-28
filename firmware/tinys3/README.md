@@ -93,11 +93,17 @@ LittleFS. When home Wi-Fi is configured, the same page is available at the
 displayed LAN address and, where mDNS is supported,
 `http://leaflights.local`.
 
-The open `OELO_1-23.0` network can be disabled under **Settings → Network**
-after home Wi-Fi is configured. If the saved home network fails at boot, the
-controller temporarily restores `OELO_1-23.0` as a recovery network to prevent
-lockout. Firmware updates and device restarts require the update password
-whenever the compatibility or recovery network is active.
+The WPA2-protected `OELO_1-23.0` network can be disabled or given a new
+8–63-character password under **Settings → Network** after home Wi-Fi is
+configured. The v0.5.4 experimental default is `LeafLights-Test`. If the saved
+home network fails at boot, the controller temporarily restores the same
+protected network for recovery. Firmware updates and device restarts retain
+the separate update-password requirement while app compatibility is tested.
+
+The Android app contains WPA2-capable connection code but passes an empty
+password when it requests `OELO_1-23.0`. For this experiment, join the network
+manually in phone settings before opening Local AP Control. Do not assume app
+compatibility until that path has been tested on the target phone.
 
 The following original local-controller endpoints are implemented for app
 compatibility:

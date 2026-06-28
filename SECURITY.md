@@ -2,16 +2,16 @@
 
 ## Local AP compatibility
 
-The vendor app hard-codes an open Wi-Fi access point named `OELO_1-23.0` and
-the controller address `172.24.1.1`. The sample firmware reproduces those
-values so the unmodified app can use Local AP Control.
+The vendor app hard-codes a Wi-Fi access point named `OELO_1-23.0` and the
+controller address `172.24.1.1`. Release v0.5.4 experimentally protects that
+network with WPA2 while retaining the expected name and address.
 
 Consequences:
 
-- the setup AP has no password;
+- the compatibility AP requires its configured WPA2 password;
 - local HTTP endpoints have no authentication;
-- any nearby client that joins the AP can inspect configuration and control
-  the lights;
+- clients that know the WPA2 password can use the legacy unauthenticated local
+  endpoints;
 - the AP should not be treated as a trusted management network.
 
 The browser interface may also be exposed on the home LAN after provisioning.

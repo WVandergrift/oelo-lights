@@ -120,10 +120,12 @@ zone in the active pattern. These settings are stored in NVS.
 updates. Once configured, changing it requires HTTP Basic authentication with
 username `leaflights` and the current password.
 
-`POST /api/network` stores home-network settings and the optional
-`compatibilityApEnabled` flag. Disabling the open compatibility AP requires a
-configured home network. If that network fails at boot, the firmware starts a
-temporary recovery AP rather than leaving the controller unreachable.
+`POST /api/network` stores home-network settings, the optional
+`compatibilityApEnabled` flag, and an optional 8–63-character
+`compatibilityApPassword`. A blank password preserves the current WPA2
+passphrase. Disabling the compatibility AP requires a configured home network.
+If that network fails at boot, the firmware starts a protected temporary
+recovery AP rather than leaving the controller unreachable.
 
 `POST /api/restart` schedules a controlled controller restart.
 
@@ -132,7 +134,7 @@ streamed to the inactive OTA slot, verified by the ESP32 Update library,
 activated, and followed by a controlled reboot.
 
 Firmware upload, release installation, automatic-update configuration, and
-restart require HTTP Basic authentication whenever the open compatibility or
+restart require HTTP Basic authentication whenever the compatibility or
 recovery AP is active. Authentication is optional when the controller is
 reachable only through home Wi-Fi.
 
