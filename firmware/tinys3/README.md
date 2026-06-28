@@ -19,6 +19,24 @@ The firmware uses FastLED with timing parameters equivalent to `UCS1903` (`500 n
 
 The configured color order can be `RGB`, `RBG`, `GRB`, `GBR`, `BRG`, or `BGR`; missing or invalid configuration defaults to `GBR`.
 
+## Brightness and power-supply ceiling
+
+This build is configured for the installed **36 V, 5.6 A (201.6 W)** power
+supply. Global brightness is hard-limited to **204/255 (80%)**, reserving 20%
+of the supply's nameplate capacity. The default remains 32/255.
+
+Oelo encodes brightness in each pattern's RGB values. This firmware applies
+the global brightness control as an additional scale, so an Oelo pattern at
+full RGB output is still capped at 80% by the controller.
+
+This is a conservative output ceiling, not active current measurement. Actual
+load depends on the installed fixtures, colors, wiring, and voltage drop. Do
+not treat the cap as a replacement for correctly sized wiring, branch fusing,
+or measuring worst-case current at the supply. The configured 272 fixtures are
+below Oelo's nominal 300-light limit for one supply, but Oelo also requires the
+limit to be reduced by one light for every 3 feet of 3-core feed cable. Confirm
+that cable-length derating separately.
+
 ## Before connecting hardware
 
 - Power the lighting from its correctly sized external supply, not the ESP32.

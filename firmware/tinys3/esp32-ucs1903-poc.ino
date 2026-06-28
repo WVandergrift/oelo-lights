@@ -23,11 +23,22 @@ constexpr uint8_t kPhysicalPixelsPerFixture = 2;
 constexpr uint16_t kMaxPhysicalPixels =
     kMaxLogicalLeds * kPhysicalPixelsPerFixture;
 constexpr uint8_t kDefaultBrightness = 32;
+// The installed 36 V, 5.6 A supply is capped at 80% of nameplate output.
+// This is a conservative global output cap, not active current measurement:
+// Oelo does not publish a fixture current curve and FastLED's generic current
+// estimator is not calibrated for these 36 V fixtures.
+constexpr uint8_t kPowerSupplyVolts = 36;
+constexpr uint16_t kPowerSupplyMilliamps = 5600;
+constexpr uint8_t kPowerBudgetPercent = 80;
+constexpr uint16_t kPowerBudgetMilliamps =
+    (kPowerSupplyMilliamps * kPowerBudgetPercent) / 100;
+constexpr uint8_t kMaximumBrightness =
+    (255 * kPowerBudgetPercent) / 100;
 constexpr uint8_t kMaxPatternColors = 128;
 constexpr uint16_t kPatternLibraryVersion = 1;
 constexpr char kAccessPointName[] = "OELO_1-23.0";
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "0.5.1-dev"
+#define FIRMWARE_VERSION "0.5.2-dev"
 #endif
 constexpr char kFirmwareVersion[] = FIRMWARE_VERSION;
 constexpr char kOtaUsername[] = "leaflights";
@@ -280,7 +291,12 @@ void loadConfiguration() {
   wifiPassword = preferences.getString("password", "");
   otaPassword = preferences.getString("otaPassword", "");
   automaticUpdates = preferences.getBool("autoUpdate", false);
-  brightness = preferences.getUChar("brightness", kDefaultBrightness);
+  const uint8_t savedBrightness =
+      preferences.getUChar("brightness", kDefaultBrightness);
+  brightness = constrain(savedBrightness, 1, kMaximumBrightness);
+  if (brightness != savedBrightness) {
+    preferences.putUChar("brightness", brightness);
+  }
   wledSync.enabled = preferences.getBool("ddpEnabled", false);
   wledSync.destination =
       preferences.getString("ddpDest", "255.255.255.255");
@@ -1271,6 +1287,13 @@ void sendStatusJson() {
   document["firmwareVersion"] = kFirmwareVersion;
   document["buildDate"] = __DATE__ " " __TIME__;
   document["brightness"] = brightness;
+  JsonObject powerSafety = document["powerSafety"].to<JsonObject>();
+  powerSafety["supplyVolts"] = kPowerSupplyVolts;
+  powerSafety["supplyMilliamps"] = kPowerSupplyMilliamps;
+  powerSafety["budgetMilliamps"] = kPowerBudgetMilliamps;
+  powerSafety["budgetPercent"] = kPowerBudgetPercent;
+  powerSafety["maximumBrightness"] = kMaximumBrightness;
+  powerSafety["activeMeasurement"] = false;
   document["activePattern"] = activePattern.type;
   document["patternRunning"] = activePattern.running;
   JsonObject wifi = document["wifi"].to<JsonObject>();
@@ -1312,9 +1335,9 @@ void handleApiColor() {
     sendText(400, "Zone is disabled or invalid");
     return;
   }
-  const int requestedBrightness = server.arg("brightness").toInt();
-  if (requestedBrightness >= 1 && requestedBrightness <= 255) {
-    brightness = requestedBrightness;
+  if (server.hasArg("brightness")) {
+    const int requestedBrightness = server.arg("brightness").toInt();
+    brightness = constrain(requestedBrightness, 1, kMaximumBrightness);
     FastLED.setBrightness(brightness);
     preferences.putUChar("brightness", brightness);
   }
@@ -1327,8 +1350,9 @@ void handleApiColor() {
 
 void handleBrightness() {
   const int requested = server.arg("value").toInt();
-  if (requested < 1 || requested > 255) {
-    sendText(400, "Brightness must be between 1 and 255");
+  if (requested < 1 || requested > kMaximumBrightness) {
+    sendText(400, String("Brightness must be between 1 and ") +
+                      kMaximumBrightness);
     return;
   }
   brightness = requested;
@@ -1805,7 +1829,7 @@ void configureWifi() {
 void printHelp() {
   Serial.println("Commands:");
   Serial.println("  zone <0-5> <r> <g> <b>");
-  Serial.println("  brightness <1-255>");
+  Serial.printf("  brightness <1-%u>\n", kMaximumBrightness);
   Serial.println("  off");
   Serial.println("  status");
 }
@@ -1833,7 +1857,7 @@ void handleSerialCommand(String line) {
     FastLED.show();
     Serial.println("Zone updated");
   } else if (sscanf(line.c_str(), "brightness %d", &value) == 1 &&
-             value >= 1 && value <= 255) {
+             value >= 1 && value <= kMaximumBrightness) {
     brightness = value;
     FastLED.setBrightness(brightness);
     preferences.putUChar("brightness", brightness);
