@@ -118,6 +118,12 @@ POST /api/install-release
 POST /api/automatic-updates
 ```
 
+`GET /api/status` includes both the legacy `activePattern` movement string and
+an `activePatternState` object containing the displayed pattern name and ID,
+movement, palette, speed, direction, gap, other parameters, and selected-zone
+mask. This lets a newly opened browser reconstruct the animated **Now showing**
+preview instead of guessing from the movement name alone.
+
 `POST /api/wled-sync` accepts form fields `enabled`, `destination`,
 `pixelCount`, and `sourceZone`. A source of `-1` automatically uses the first
 zone in the active pattern. These settings are stored in NVS.

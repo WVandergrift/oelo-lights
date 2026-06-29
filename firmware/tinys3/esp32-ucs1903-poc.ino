@@ -43,7 +43,7 @@ constexpr char kDefaultCompatibilityApPassword[] = "LeafLights-Test";
 constexpr char kSetupAccessPointName[] = "LeafLights-Setup";
 constexpr char kSetupAccessPointPassword[] = "LeafLights-Setup";
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "0.7.1-dev"
+#define FIRMWARE_VERSION "0.7.2-dev"
 #endif
 constexpr char kFirmwareVersion[] = FIRMWARE_VERSION;
 constexpr char kGithubApiUrl[] =
@@ -86,6 +86,8 @@ enum class PatternKind : uint8_t {
 struct PatternState {
   bool running = false;
   PatternKind kind = PatternKind::Off;
+  int id = 0;
+  String name = "Lights off";
   String type = "off";
   uint8_t zoneMask = 0;
   uint8_t colorCount = 1;
@@ -466,7 +468,12 @@ void fillZone(uint8_t zone, const CRGB& color) {
 void allOff() {
   activePattern.running = false;
   activePattern.kind = PatternKind::Off;
+  activePattern.id = 0;
+  activePattern.name = "Lights off";
   activePattern.type = "off";
+  activePattern.zoneMask = 0;
+  activePattern.colorCount = 1;
+  activePattern.colors[0] = CRGB::Black;
   for (uint8_t zone = 0; zone < kZoneCount; ++zone) {
     fillZone(zone, CRGB::Black);
   }
@@ -1292,8 +1299,11 @@ bool renderWeather(uint32_t now, bool storm) {
 
 void startPattern(const String& requestedType, uint8_t zoneMask,
                   const CRGB* palette, uint8_t colorCount, uint8_t speed,
-                  uint8_t gap, bool reverse, uint8_t pause, uint8_t other) {
+                  uint8_t gap, bool reverse, uint8_t pause, uint8_t other,
+                  const String& displayName = "", int patternId = 0) {
   activePattern = PatternState();
+  activePattern.id = patternId;
+  activePattern.name = displayName.isEmpty() ? requestedType : displayName;
   activePattern.type = requestedType;
   activePattern.type.toLowerCase();
   activePattern.kind = patternKindFromName(activePattern.type);
@@ -1398,9 +1408,48 @@ void updateActivePattern() {
   }
 }
 
+String resolvePatternDisplayName(int patternId, const String& requestedName,
+                                 const String& type, const CRGB* palette,
+                                 uint8_t colorCount, uint8_t speed, uint8_t gap,
+                                 bool reverse, uint8_t pause, uint8_t other) {
+  if (!requestedName.isEmpty()) return requestedName.substring(0, 48);
+  File file = LittleFS.open("/patterns.json", "r");
+  if (!file) return type;
+  JsonDocument document;
+  const DeserializationError error = deserializeJson(document, file);
+  file.close();
+  if (error || !document.is<JsonArray>()) return type;
+  for (JsonObjectConst saved : document.as<JsonArrayConst>()) {
+    if (patternId > 0 && (saved["id"] | 0) == patternId) {
+      return String(saved["name"] | type.c_str());
+    }
+    const String savedDirection = saved["direction"] | "F";
+    if (String(saved["type"] | "") != type ||
+        (saved["speed"] | 10) != speed || (saved["gap"] | 0) != gap ||
+        (saved["pause"] | 0) != pause || (saved["other"] | 0) != other ||
+        (savedDirection == "R") != reverse) {
+      continue;
+    }
+    CRGB savedPalette[kMaxPatternColors];
+    const uint8_t savedCount = parsePalette(
+        String(saved["colors"] | ""), savedPalette, kMaxPatternColors);
+    if (savedCount != colorCount) continue;
+    bool matches = true;
+    for (uint8_t i = 0; i < colorCount; ++i) {
+      if (savedPalette[i] != palette[i]) {
+        matches = false;
+        break;
+      }
+    }
+    if (matches) return String(saved["name"] | type.c_str());
+  }
+  return type;
+}
+
 void handleSetPattern() {
   String patternType = server.arg("patternType");
   if (patternType.isEmpty()) patternType = "stationary";
+  patternType.toLowerCase();
   const String selectedZones = server.arg("zones");
   CRGB palette[kMaxPatternColors];
   uint8_t colorCount =
@@ -1414,9 +1463,19 @@ void handleSetPattern() {
   const uint8_t pause = constrain(server.arg("pause").toInt(), 0, 255);
   const uint8_t other = constrain(server.arg("other").toInt(), 0, 255);
   const String direction = server.arg("direction");
+  int patternId = server.arg("patternId").toInt();
+  if (patternId <= 0) patternId = server.arg("id").toInt();
+  String requestedName = server.arg("patternName");
+  if (requestedName.isEmpty()) requestedName = server.arg("name");
+  const String displayName = patternType == "off"
+      ? "Lights off"
+      : resolvePatternDisplayName(patternId, requestedName, patternType,
+                                  palette, colorCount, speed, gap,
+                                  direction == "R", pause, other);
   startPattern(patternType, selectedZoneMask(selectedZones), palette, colorCount,
-               speed, gap, direction == "R", pause, other);
-  beginManualUntilNext(patternType == "off" ? "Lights off" : "Manual pattern");
+               speed, gap, direction == "R", pause, other, displayName,
+               patternId);
+  beginManualUntilNext(displayName);
   sendText(200, patternType == "off" ? "off" : "pattern applied");
 }
 
@@ -1425,7 +1484,8 @@ void startFastFireworks(uint8_t zoneMask) {
       CRGB(255, 255, 255), CRGB(0, 0, 255), CRGB(0, 0, 255),
       CRGB(255, 255, 255), CRGB(255, 0, 0), CRGB(255, 0, 0),
   };
-  startPattern("twinkle", zoneMask, colors, 6, 10, 0, true, 0, 0);
+  startPattern("twinkle", zoneMask, colors, 6, 10, 0, true, 0, 0,
+               "Fourth of July: Fast Fireworks", 1);
 }
 
 void handleAuthStatus() {
@@ -1564,6 +1624,24 @@ void sendStatusJson() {
   powerSafety["activeMeasurement"] = false;
   document["activePattern"] = activePattern.type;
   document["patternRunning"] = activePattern.running;
+  JsonObject active = document["activePatternState"].to<JsonObject>();
+  active["id"] = activePattern.id;
+  active["name"] = activePattern.name;
+  active["type"] = activePattern.type;
+  active["zones"] = activePattern.zoneMask;
+  active["speed"] = activePattern.speed;
+  active["gap"] = activePattern.gap;
+  active["pause"] = activePattern.pause;
+  active["other"] = activePattern.other;
+  active["direction"] = activePattern.reverse ? "R" : "F";
+  JsonArray activeColors = active["colors"].to<JsonArray>();
+  for (uint8_t i = 0; i < activePattern.colorCount; ++i) {
+    char color[8];
+    snprintf(color, sizeof(color), "#%02x%02x%02x",
+             activePattern.colors[i].r, activePattern.colors[i].g,
+             activePattern.colors[i].b);
+    activeColors.add(color);
+  }
   JsonObject wifi = document["wifi"].to<JsonObject>();
   wifi["apSsid"] = setupApActive ? kSetupAccessPointName : kAccessPointName;
   wifi["apIp"] = (compatibilityApActive || setupApActive)
@@ -1620,7 +1698,8 @@ void handleApiColor() {
   const CRGB color(constrain(server.arg("r").toInt(), 0, 255),
                    constrain(server.arg("g").toInt(), 0, 255),
                    constrain(server.arg("b").toInt(), 0, 255));
-  startPattern("stationary", 1U << zone, &color, 1, 10, 0, false, 0, 0);
+  startPattern("stationary", 1U << zone, &color, 1, 10, 0, false, 0, 0,
+               "Custom color");
   beginManualUntilNext(String("Manual color on ") + zones[zone].name);
   sendText(200, String("Zone ") + String(zone + 1) + " updated");
 }
@@ -2262,7 +2341,8 @@ bool applyStoredPattern(int patternId, uint8_t zoneMask, String& error) {
     startPattern(String(pattern["type"] | "stationary"), zoneMask,
                  palette, count, pattern["speed"] | 10,
                  pattern["gap"] | 0, direction == "R",
-                 pattern["pause"] | 0, pattern["other"] | 0);
+                 pattern["pause"] | 0, pattern["other"] | 0,
+                 String(pattern["name"] | "Scheduled pattern"), patternId);
     return true;
   }
   error = String("Scheduled pattern ") + patternId + " was not found";
