@@ -105,6 +105,9 @@ GET  /api/brightness?value=<1-204>
 GET  /api/off
 GET  /api/preset/fast-fireworks
 POST /api/patterns
+GET  /api/schedules
+POST /api/schedules
+POST /api/manual-override
 POST /api/zones
 POST /api/network
 POST /api/restart
@@ -118,6 +121,55 @@ POST /api/automatic-updates
 `POST /api/wled-sync` accepts form fields `enabled`, `destination`,
 `pixelCount`, and `sourceZone`. A source of `-1` automatically uses the first
 zone in the active pattern. These settings are stored in NVS.
+
+`GET /api/schedules` returns the stored document plus a transient `runtime`
+object with clock validity, local time, scheduler status, next event, and
+manual-override status. `POST /api/schedules` replaces the document:
+
+```json
+{
+  "version": 1,
+  "location": {
+    "timezone": "CST6CDT,M3.2.0/2,M11.1.0/2",
+    "latitude": 41.8781,
+    "longitude": -87.6298
+  },
+  "weekly": [{
+    "id": 1,
+    "name": "Weeknight lights",
+    "enabled": true,
+    "days": 62,
+    "on": { "type": "sunset", "offset": -20 },
+    "off": { "type": "clock", "minutes": 1380 },
+    "patternId": 2,
+    "zones": 3,
+    "priority": 0
+  }],
+  "holidays": [{
+    "id": 2,
+    "name": "Fourth of July",
+    "enabled": true,
+    "month": 7,
+    "day": 4,
+    "daysBefore": 2,
+    "daysAfter": 1,
+    "on": { "type": "sunset", "offset": -20 },
+    "off": { "type": "clock", "minutes": 1410 },
+    "patternId": 1,
+    "zones": 3,
+    "priority": 100
+  }]
+}
+```
+
+`days` is a Sunday-through-Saturday bitmask. `zones` is a zero-based zone
+bitmask; zero means every enabled zone. Clock expressions use minutes after
+midnight. Solar expressions use signed offset minutes.
+
+`POST /api/manual-override` accepts `action=hold`, `action=off`, or
+`action=clear`. Hold/off can use `duration=next`,
+`duration=minutes&minutes=<1-10080>`, or another duration value to remain active
+until explicitly cleared. Manual overrides are not persisted across restart.
 
 `GET /api/auth-status` reports whether the optional web login is configured and
 whether the current browser session is authenticated. `POST /api/login`

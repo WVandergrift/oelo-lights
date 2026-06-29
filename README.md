@@ -26,6 +26,8 @@ The sample firmware currently runs on an Unexpected Maker TinyS3 and provides:
   the optional web-interface login session;
 - GitHub release discovery, release-note review, selected-version installation,
   and opt-in automatic stable updates;
+- local seven-day and annual holiday scheduling with clock, sunrise, and sunset
+  expressions plus until-next-event manual overrides;
 - the recovered **Fourth of July: Fast Fireworks** profile and nine original
   red, white, and blue presets.
 
@@ -110,14 +112,17 @@ pio run -e um_tinys3
 pio run -e um_tinys3 -t upload
 ```
 
-After flashing, connect to the open `OELO_1-23.0` access point and open:
+After flashing a fresh controller, join `LeafLights-Setup` using password
+`LeafLights-Setup`, then open:
 
 ```text
 http://172.24.1.1
 ```
 
-Select one or more zones and press **Play** on a saved pattern, or use the
-LeafFilter app workflow in [docs/leaf-filter-app.md](docs/leaf-filter-app.md).
+The onboarding wizard configures zones, home Wi-Fi, optional WPA2-protected
+Oelo compatibility, and optional web authentication. Select one or more zones
+and press **Play** on a saved pattern, or use the LeafFilter app workflow in
+[docs/leaf-filter-app.md](docs/leaf-filter-app.md).
 WLED receiver setup is covered in [docs/wled-sync.md](docs/wled-sync.md).
 
 ## First electrical test
@@ -140,6 +145,7 @@ the same. Never power the lights from the TinyS3.
 - [Local controller HTTP API](docs/local-api.md)
 - [LeafFilter app offline workflow](docs/leaf-filter-app.md)
 - [Patterns and Fast Fireworks](docs/patterns.md)
+- [Weekly and holiday scheduling](docs/scheduling.md)
 - [WLED realtime synchronization](docs/wled-sync.md)
 - [GitHub releases and automatic updates](docs/releases.md)
 - [Firmware update path](docs/firmware-update-path.md)

@@ -75,9 +75,9 @@ marked enabled in persisted configuration.
 
 Detailed Android workflow: [../../docs/leaf-filter-app.md](../../docs/leaf-filter-app.md)
 
-The firmware always creates the open access point `OELO_1-23.0` at
-`172.24.1.1`, matching the values hard-coded in the LeafFilter/Oelo Android
-app. Connect a phone or computer to that network and open:
+Fresh firmware creates the WPA2-protected setup network `LeafLights-Setup` at
+`172.24.1.1` with password `LeafLights-Setup`. Connect a phone or computer and
+open:
 
 ```text
 http://172.24.1.1
@@ -88,9 +88,9 @@ previews, a pattern editor, multi-zone selection, per-zone hardware settings,
 home Wi-Fi provisioning, diagnostics, and optional WLED realtime sync. The
 Midnight, Firework, and Solar interface themes are selected under
 **Settings → Appearance** and persist independently in each browser. Controller
-settings are stored in ESP32 NVS and survive power loss. Saved patterns live in
-LittleFS. When home Wi-Fi is configured, the same page is available at the
-displayed LAN address and, where mDNS is supported,
+settings are stored in ESP32 NVS and survive power loss. Saved patterns and
+schedules live in LittleFS. When home Wi-Fi is configured, the same page is
+available at the displayed LAN address and, where mDNS is supported,
 `http://leaflights.local`.
 
 Fresh controllers start the four-step onboarding wizard on the temporary
@@ -110,6 +110,22 @@ The Android app contains WPA2-capable connection code but passes an empty
 password when it requests `OELO_1-23.0`. For this experiment, join the network
 manually in phone settings before opening Local AP Control. Do not assume app
 compatibility until that path has been tested on the target phone.
+
+## Weekly and holiday scheduling
+
+The **Schedules** page provides a seven-day routine and annual holiday
+overrides. On and off times can be fixed local times or offsets from sunrise or
+sunset. Location and time-zone settings are stored only on the controller;
+solar events are calculated locally.
+
+Control precedence is manual override, holiday override, weekly routine, then
+off. Browser pattern, color, and off actions hold until the next scheduled
+event. Schedule settings survive normal firmware updates; manual overrides do
+not survive reboot.
+
+The TinyS3 has no battery-backed clock. Home Wi-Fi and a successful NTP sync
+are required after every boot before the scheduler takes control. See
+[../../docs/scheduling.md](../../docs/scheduling.md) for rule semantics.
 
 The following original local-controller endpoints are implemented for app
 compatibility:

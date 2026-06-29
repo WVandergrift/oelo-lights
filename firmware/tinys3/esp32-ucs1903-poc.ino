@@ -12,6 +12,8 @@
 #include <WiFiClientSecure.h>
 #include <WiFiUdp.h>
 #include <mbedtls/sha256.h>
+#include <math.h>
+#include <time.h>
 
 #include "github_roots.h"
 #include "web_ui.h"
@@ -41,7 +43,7 @@ constexpr char kDefaultCompatibilityApPassword[] = "LeafLights-Test";
 constexpr char kSetupAccessPointName[] = "LeafLights-Setup";
 constexpr char kSetupAccessPointPassword[] = "LeafLights-Setup";
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "0.6.0-dev"
+#define FIRMWARE_VERSION "0.7.0-dev"
 #endif
 constexpr char kFirmwareVersion[] = FIRMWARE_VERSION;
 constexpr char kGithubApiUrl[] =
@@ -127,6 +129,23 @@ struct GithubRelease {
   bool prerelease = false;
 };
 
+struct ScheduleDecision {
+  bool managed = false;
+  bool active = false;
+  bool holiday = false;
+  int patternId = 0;
+  uint8_t zoneMask = 0;
+  int priority = -32768;
+  String name = "Scheduled off";
+};
+
+struct ManualOverride {
+  bool active = false;
+  bool off = false;
+  time_t until = 0;
+  String description;
+};
+
 CRGB zonePixels[kZoneCount][kMaxPhysicalPixels];
 ZoneConfig zones[kZoneCount];
 bool zoneRegistered[kZoneCount] = {};
@@ -160,9 +179,19 @@ String otaUploadError;
 bool automaticUpdates = false;
 uint32_t nextAutomaticUpdateAt = 0;
 String automaticUpdateStatus = "Automatic updates disabled";
+String scheduleTimezone = "CST6CDT,M3.2.0/2,M11.1.0/2";
+double scheduleLatitude = 41.8781;
+double scheduleLongitude = -87.6298;
+uint32_t lastScheduleCheckAt = 0;
+time_t nextScheduleTransition = 0;
+String scheduleRuntimeStatus = "Scheduling not configured";
+String scheduleAppliedKey;
+ManualOverride manualOverride;
 
 void sendDdpFrame(bool force = false);
 void saveNetwork(const String& ssid, const String& password);
+void serviceSchedules();
+void beginManualUntilNext(const String& description);
 
 const char kSeedPatterns[] PROGMEM = R"JSON([
   {
@@ -286,6 +315,17 @@ const char kSeedPatterns[] PROGMEM = R"JSON([
     "colors": "1,8,60,8,30,145,30,78,255,198,220,255,255,248,225,255,142,116,235,24,34,125,0,16,"
   }
 ])JSON";
+
+const char kDefaultSchedules[] PROGMEM = R"JSON({
+  "version": 1,
+  "location": {
+    "timezone": "CST6CDT,M3.2.0/2,M11.1.0/2",
+    "latitude": 41.8781,
+    "longitude": -87.6298
+  },
+  "weekly": [],
+  "holidays": []
+})JSON";
 
 String preferenceKey(const char* prefix, uint8_t zone) {
   return String(prefix) + zone;
@@ -556,7 +596,7 @@ bool ensureGithubClock(String& error) {
   }
   time_t now = time(nullptr);
   if (now > 1700000000) return true;
-  configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+  configTzTime(scheduleTimezone.c_str(), "pool.ntp.org", "time.nist.gov");
   const uint32_t deadline = millis() + 8000;
   while (time(nullptr) <= 1700000000 && millis() < deadline) delay(100);
   if (time(nullptr) <= 1700000000) {
@@ -1376,6 +1416,7 @@ void handleSetPattern() {
   const String direction = server.arg("direction");
   startPattern(patternType, selectedZoneMask(selectedZones), palette, colorCount,
                speed, gap, direction == "R", pause, other);
+  beginManualUntilNext(patternType == "off" ? "Lights off" : "Manual pattern");
   sendText(200, patternType == "off" ? "off" : "pattern applied");
 }
 
@@ -1580,6 +1621,7 @@ void handleApiColor() {
                    constrain(server.arg("g").toInt(), 0, 255),
                    constrain(server.arg("b").toInt(), 0, 255));
   startPattern("stationary", 1U << zone, &color, 1, 10, 0, false, 0, 0);
+  beginManualUntilNext(String("Manual color on ") + zones[zone].name);
   sendText(200, String("Zone ") + String(zone + 1) + " updated");
 }
 
@@ -1989,6 +2031,8 @@ void savePatternsJson(const String& json) {
   }
   file.print(json);
   file.close();
+  scheduleAppliedKey = "";
+  lastScheduleCheckAt = millis() - 15000;
   sendText(200, "Patterns saved");
 }
 
@@ -2006,6 +2050,513 @@ void handleSavePatternsBody() {
     return;
   }
   savePatternsJson(server.arg("plain"));
+}
+
+int32_t civilDayNumber(int year, unsigned month, unsigned day) {
+  year -= month <= 2;
+  const int era = (year >= 0 ? year : year - 399) / 400;
+  const unsigned yearOfEra = static_cast<unsigned>(year - era * 400);
+  const unsigned dayOfYear =
+      (153 * (month + (month > 2 ? -3 : 9)) + 2) / 5 + day - 1;
+  const unsigned dayOfEra =
+      yearOfEra * 365 + yearOfEra / 4 - yearOfEra / 100 + dayOfYear;
+  return era * 146097 + static_cast<int32_t>(dayOfEra);
+}
+
+int32_t localDayNumber(const tm& value) {
+  return civilDayNumber(value.tm_year + 1900, value.tm_mon + 1,
+                        value.tm_mday);
+}
+
+int timezoneOffsetMinutes(time_t timestamp) {
+  tm localValue = {};
+  tm utcValue = {};
+  localtime_r(&timestamp, &localValue);
+  gmtime_r(&timestamp, &utcValue);
+  utcValue.tm_isdst = -1;
+  return static_cast<int>(difftime(mktime(&localValue), mktime(&utcValue)) /
+                          60);
+}
+
+double normalizedDegrees(double value) {
+  value = fmod(value, 360.0);
+  return value < 0 ? value + 360.0 : value;
+}
+
+int solarMinutes(const tm& date, bool sunrise, int offsetMinutes,
+                 time_t reference) {
+  const double longitudeHour = scheduleLongitude / 15.0;
+  const double approximate = date.tm_yday + 1 +
+      ((sunrise ? 6.0 : 18.0) - longitudeHour) / 24.0;
+  const double meanAnomaly = 0.9856 * approximate - 3.289;
+  double trueLongitude = meanAnomaly +
+      1.916 * sin(meanAnomaly * DEG_TO_RAD) +
+      0.020 * sin(2 * meanAnomaly * DEG_TO_RAD) + 282.634;
+  trueLongitude = normalizedDegrees(trueLongitude);
+  double rightAscension = atan(0.91764 * tan(trueLongitude * DEG_TO_RAD)) /
+                          DEG_TO_RAD;
+  rightAscension = normalizedDegrees(rightAscension);
+  rightAscension += floor(trueLongitude / 90.0) * 90.0 -
+                    floor(rightAscension / 90.0) * 90.0;
+  rightAscension /= 15.0;
+  const double sinDeclination = 0.39782 * sin(trueLongitude * DEG_TO_RAD);
+  const double cosDeclination = cos(asin(sinDeclination));
+  const double cosHour =
+      (cos(90.833 * DEG_TO_RAD) -
+       sinDeclination * sin(scheduleLatitude * DEG_TO_RAD)) /
+      (cosDeclination * cos(scheduleLatitude * DEG_TO_RAD));
+  if (cosHour > 1.0 || cosHour < -1.0) return -1;
+  double hour = sunrise ? 360.0 - acos(cosHour) / DEG_TO_RAD
+                        : acos(cosHour) / DEG_TO_RAD;
+  hour /= 15.0;
+  const double localMean = hour + rightAscension -
+                           0.06571 * approximate - 6.622;
+  double utcHour = fmod(localMean - longitudeHour, 24.0);
+  if (utcHour < 0) utcHour += 24.0;
+  int result = static_cast<int>(round(utcHour * 60.0)) +
+               timezoneOffsetMinutes(reference) + offsetMinutes;
+  result %= 1440;
+  if (result < 0) result += 1440;
+  return result;
+}
+
+int resolveTimeExpression(JsonVariantConst expression, const tm& date,
+                          time_t reference) {
+  const String type = expression["type"] | "clock";
+  if (type == "clock") {
+    return constrain(expression["minutes"] | 0, 0, 1439);
+  }
+  const int offset = constrain(expression["offset"] | 0, -720, 720);
+  if (type == "sunrise") return solarMinutes(date, true, offset, reference);
+  if (type == "sunset") return solarMinutes(date, false, offset, reference);
+  return -1;
+}
+
+bool weeklyDateEligible(JsonObjectConst rule, const tm& date) {
+  const uint8_t days = rule["days"] | 0;
+  return (days & (1U << date.tm_wday)) != 0;
+}
+
+bool holidayDateEligible(JsonObjectConst rule, const tm& date) {
+  const int month = rule["month"] | 1;
+  const int day = rule["day"] | 1;
+  const int before = constrain(rule["daysBefore"] | 0, 0, 366);
+  const int after = constrain(rule["daysAfter"] | 0, 0, 366);
+  const int32_t current = localDayNumber(date);
+  for (int yearOffset = -1; yearOffset <= 1; ++yearOffset) {
+    const int32_t anchor = civilDayNumber(
+        date.tm_year + 1900 + yearOffset, month, day);
+    if (current >= anchor - before && current <= anchor + after) return true;
+  }
+  return false;
+}
+
+bool ruleWindowActive(JsonObjectConst rule, bool holiday, time_t timestamp) {
+  tm current = {};
+  tm previous = {};
+  localtime_r(&timestamp, &current);
+  const time_t previousTimestamp = timestamp - 86400;
+  localtime_r(&previousTimestamp, &previous);
+  const int minute = current.tm_hour * 60 + current.tm_min;
+  const int on = resolveTimeExpression(rule["on"], current, timestamp);
+  const int off = resolveTimeExpression(rule["off"], current, timestamp);
+  if (on < 0 || off < 0) return false;
+  const bool currentEligible = holiday ? holidayDateEligible(rule, current)
+                                       : weeklyDateEligible(rule, current);
+  if (on < off) return currentEligible && minute >= on && minute < off;
+  const bool previousEligible = holiday ? holidayDateEligible(rule, previous)
+                                        : weeklyDateEligible(rule, previous);
+  return (currentEligible && minute >= on) ||
+         (previousEligible && minute < off);
+}
+
+uint8_t configuredZoneMask(JsonObjectConst rule) {
+  uint8_t requested = rule["zones"] | 0;
+  uint8_t enabled = 0;
+  for (uint8_t zone = 0; zone < kZoneCount; ++zone) {
+    if (zones[zone].enabled) enabled |= 1U << zone;
+  }
+  return requested ? requested & enabled : enabled;
+}
+
+ScheduleDecision evaluateSchedulesAt(JsonDocument& document,
+                                     time_t timestamp) {
+  ScheduleDecision result;
+  tm current = {};
+  tm previous = {};
+  localtime_r(&timestamp, &current);
+  const time_t previousTimestamp = timestamp - 86400;
+  localtime_r(&previousTimestamp, &previous);
+
+  JsonArrayConst holidays = document["holidays"].as<JsonArrayConst>();
+  for (JsonObjectConst rule : holidays) {
+    if (!(rule["enabled"] | true)) continue;
+    const int on = resolveTimeExpression(rule["on"], current, timestamp);
+    const int off = resolveTimeExpression(rule["off"], current, timestamp);
+    const bool relevant = holidayDateEligible(rule, current) ||
+        (on >= off && holidayDateEligible(rule, previous));
+    if (!relevant) continue;
+    const int priority = rule["priority"] | 100;
+    if (!result.holiday || priority > result.priority) {
+      result.managed = true;
+      result.holiday = true;
+      result.priority = priority;
+      result.active = ruleWindowActive(rule, true, timestamp);
+      result.patternId = rule["patternId"] | 0;
+      result.zoneMask = configuredZoneMask(rule);
+      result.name = String(rule["name"] | "Holiday override");
+    }
+  }
+  if (result.holiday) return result;
+
+  JsonArrayConst weekly = document["weekly"].as<JsonArrayConst>();
+  for (JsonObjectConst rule : weekly) {
+    if (!(rule["enabled"] | true)) continue;
+    result.managed = true;
+    if (!ruleWindowActive(rule, false, timestamp)) continue;
+    const int priority = rule["priority"] | 0;
+    if (!result.active || priority > result.priority) {
+      result.active = true;
+      result.priority = priority;
+      result.patternId = rule["patternId"] | 0;
+      result.zoneMask = configuredZoneMask(rule);
+      result.name = String(rule["name"] | "Weekly schedule");
+    }
+  }
+  return result;
+}
+
+String scheduleDecisionKey(const ScheduleDecision& decision) {
+  return String(decision.managed) + ":" + String(decision.active) + ":" +
+         decision.patternId + ":" + decision.zoneMask + ":" + decision.name;
+}
+
+bool applyStoredPattern(int patternId, uint8_t zoneMask, String& error) {
+  if (patternId <= 0) {
+    allOff();
+    return true;
+  }
+  File file = LittleFS.open("/patterns.json", "r");
+  if (!file) {
+    error = "Pattern library is unavailable";
+    return false;
+  }
+  JsonDocument document;
+  const DeserializationError parseError = deserializeJson(document, file);
+  file.close();
+  if (parseError || !document.is<JsonArray>()) {
+    error = "Pattern library is invalid";
+    return false;
+  }
+  for (JsonObjectConst pattern : document.as<JsonArrayConst>()) {
+    if ((pattern["id"] | -1) != patternId) continue;
+    CRGB palette[kMaxPatternColors];
+    const uint8_t count = parsePalette(
+        String(pattern["colors"] | "255,255,255,"), palette,
+        kMaxPatternColors);
+    if (count == 0) {
+      error = "Scheduled pattern has no colors";
+      return false;
+    }
+    const String direction = pattern["direction"] | "F";
+    startPattern(String(pattern["type"] | "stationary"), zoneMask,
+                 palette, count, pattern["speed"] | 10,
+                 pattern["gap"] | 0, direction == "R",
+                 pattern["pause"] | 0, pattern["other"] | 0);
+    return true;
+  }
+  error = String("Scheduled pattern ") + patternId + " was not found";
+  return false;
+}
+
+String formatLocalTime(time_t timestamp) {
+  if (timestamp <= 0) return "";
+  tm value = {};
+  localtime_r(&timestamp, &value);
+  char buffer[40];
+  strftime(buffer, sizeof(buffer), "%Y-%m-%d %I:%M %p", &value);
+  return String(buffer);
+}
+
+time_t localScheduleBoundary(const tm& date, int minutes,
+                             int extraDays = 0) {
+  tm boundary = date;
+  boundary.tm_mday += extraDays;
+  boundary.tm_hour = minutes / 60;
+  boundary.tm_min = minutes % 60;
+  boundary.tm_sec = 0;
+  boundary.tm_isdst = -1;
+  return mktime(&boundary);
+}
+
+void considerScheduleBoundary(JsonDocument& document, time_t now,
+                              time_t candidate, time_t& nearest) {
+  if (candidate <= now || (nearest && candidate >= nearest)) return;
+  const String before = scheduleDecisionKey(
+      evaluateSchedulesAt(document, candidate - 60));
+  const String after = scheduleDecisionKey(
+      evaluateSchedulesAt(document, candidate));
+  if (before != after) nearest = candidate;
+}
+
+time_t findNextScheduleTransition(JsonDocument& document, time_t now,
+                                  const ScheduleDecision&) {
+  tm today = {};
+  localtime_r(&now, &today);
+  today.tm_hour = 12;
+  today.tm_min = 0;
+  today.tm_sec = 0;
+  today.tm_isdst = -1;
+  time_t nearest = 0;
+  for (int dayOffset = -1; dayOffset <= 370; ++dayOffset) {
+    tm date = today;
+    date.tm_mday += dayOffset;
+    const time_t noon = mktime(&date);
+    localtime_r(&noon, &date);
+
+    for (JsonObjectConst rule : document["weekly"].as<JsonArrayConst>()) {
+      if (!(rule["enabled"] | true) || !weeklyDateEligible(rule, date)) {
+        continue;
+      }
+      const int on = resolveTimeExpression(rule["on"], date, noon);
+      const int off = resolveTimeExpression(rule["off"], date, noon);
+      if (on < 0 || off < 0) continue;
+      considerScheduleBoundary(document, now,
+                               localScheduleBoundary(date, on), nearest);
+      considerScheduleBoundary(document, now,
+                               localScheduleBoundary(date, off, on >= off),
+                               nearest);
+    }
+
+    for (JsonObjectConst rule : document["holidays"].as<JsonArrayConst>()) {
+      if (!(rule["enabled"] | true) || !holidayDateEligible(rule, date)) {
+        continue;
+      }
+      considerScheduleBoundary(document, now,
+                               localScheduleBoundary(date, 0), nearest);
+      considerScheduleBoundary(document, now,
+                               localScheduleBoundary(date, 0, 1), nearest);
+      const int on = resolveTimeExpression(rule["on"], date, noon);
+      const int off = resolveTimeExpression(rule["off"], date, noon);
+      if (on < 0 || off < 0) continue;
+      considerScheduleBoundary(document, now,
+                               localScheduleBoundary(date, on), nearest);
+      considerScheduleBoundary(document, now,
+                               localScheduleBoundary(date, off, on >= off),
+                               nearest);
+    }
+  }
+  return nearest;
+}
+
+bool readScheduleDocument(JsonDocument& document, String& error) {
+  File file = LittleFS.open("/schedules.json", "r");
+  if (!file) {
+    error = "Schedule storage is unavailable";
+    return false;
+  }
+  const DeserializationError parseError = deserializeJson(document, file);
+  file.close();
+  if (parseError || !document.is<JsonObject>()) {
+    error = String("Invalid schedule data: ") + parseError.c_str();
+    return false;
+  }
+  return true;
+}
+
+void loadScheduleLocation() {
+  JsonDocument document;
+  String error;
+  if (!readScheduleDocument(document, error)) return;
+  JsonObjectConst location = document["location"].as<JsonObjectConst>();
+  scheduleTimezone = String(
+      location["timezone"] | "CST6CDT,M3.2.0/2,M11.1.0/2");
+  scheduleLatitude = location["latitude"] | 41.8781;
+  scheduleLongitude = location["longitude"] | -87.6298;
+}
+
+void initializeScheduleStorage() {
+  if (!LittleFS.exists("/schedules.json")) {
+    File file = LittleFS.open("/schedules.json", "w");
+    if (file) {
+      file.print(kDefaultSchedules);
+      file.close();
+    }
+  }
+  loadScheduleLocation();
+}
+
+bool saveScheduleDocument(const String& json, String& error) {
+  JsonDocument document;
+  const DeserializationError parseError = deserializeJson(document, json);
+  if (parseError || !document.is<JsonObject>() ||
+      !document["weekly"].is<JsonArray>() ||
+      !document["holidays"].is<JsonArray>()) {
+    error = "Schedule JSON must contain weekly and holidays arrays";
+    return false;
+  }
+  JsonObjectConst location = document["location"].as<JsonObjectConst>();
+  const String timezone = location["timezone"] | "";
+  const double latitude = location["latitude"] | 999.0;
+  const double longitude = location["longitude"] | 999.0;
+  if (timezone.isEmpty() || timezone.length() > 96 || latitude < -90 ||
+      latitude > 90 || longitude < -180 || longitude > 180) {
+    error = "Enter a valid timezone, latitude, and longitude";
+    return false;
+  }
+  File file = LittleFS.open("/schedules.tmp", "w");
+  if (!file) {
+    error = "Unable to open schedule storage";
+    return false;
+  }
+  serializeJson(document, file);
+  file.close();
+  LittleFS.remove("/schedules.backup");
+  if (LittleFS.exists("/schedules.json")) {
+    LittleFS.rename("/schedules.json", "/schedules.backup");
+  }
+  if (!LittleFS.rename("/schedules.tmp", "/schedules.json")) {
+    LittleFS.rename("/schedules.backup", "/schedules.json");
+    error = "Unable to activate schedule settings";
+    return false;
+  }
+  LittleFS.remove("/schedules.backup");
+  loadScheduleLocation();
+  configTzTime(scheduleTimezone.c_str(), "pool.ntp.org", "time.nist.gov");
+  scheduleAppliedKey = "";
+  nextScheduleTransition = 0;
+  lastScheduleCheckAt = millis() - 15000;
+  return true;
+}
+
+void sendSchedulesJson() {
+  JsonDocument document;
+  String error;
+  if (!readScheduleDocument(document, error)) {
+    sendText(500, error);
+    return;
+  }
+  const time_t now = time(nullptr);
+  JsonObject runtime = document["runtime"].to<JsonObject>();
+  runtime["clockValid"] = now > 1700000000;
+  runtime["now"] = formatLocalTime(now);
+  runtime["status"] = scheduleRuntimeStatus;
+  runtime["nextEvent"] = formatLocalTime(nextScheduleTransition);
+  runtime["manualOverride"] = manualOverride.active;
+  runtime["manualDescription"] = manualOverride.description;
+  runtime["manualUntil"] = formatLocalTime(manualOverride.until);
+  String response;
+  serializeJson(document, response);
+  sendText(200, response, "application/json");
+}
+
+void handleSaveSchedules() {
+  if (!server.hasArg("plain")) {
+    sendText(400, "Missing schedule JSON");
+    return;
+  }
+  String error;
+  if (!saveScheduleDocument(server.arg("plain"), error)) {
+    sendText(400, error);
+    return;
+  }
+  sendText(200, "Schedules saved");
+}
+
+void beginManualUntilNext(const String& description) {
+  JsonDocument document;
+  String error;
+  const time_t now = time(nullptr);
+  if (now <= 1700000000 || !readScheduleDocument(document, error)) return;
+  const ScheduleDecision current = evaluateSchedulesAt(document, now);
+  if (!current.managed) return;
+  manualOverride.active = true;
+  manualOverride.off = false;
+  manualOverride.until = findNextScheduleTransition(document, now, current);
+  manualOverride.description = description;
+  scheduleRuntimeStatus = String("Manual override: ") + description;
+}
+
+void handleManualOverride() {
+  const String action = server.arg("action");
+  if (action == "clear") {
+    manualOverride = ManualOverride();
+    scheduleAppliedKey = "";
+    lastScheduleCheckAt = millis() - 15000;
+    sendText(200, "Manual override cleared");
+    return;
+  }
+  manualOverride.active = true;
+  manualOverride.off = action == "off";
+  manualOverride.description = manualOverride.off ? "Lights off" :
+                               "Current lighting held";
+  const String duration = server.arg("duration");
+  if (duration == "next") {
+    JsonDocument document;
+    String error;
+    const time_t now = time(nullptr);
+    if (readScheduleDocument(document, error)) {
+      manualOverride.until = findNextScheduleTransition(
+          document, now, evaluateSchedulesAt(document, now));
+    }
+  } else if (duration == "minutes") {
+    manualOverride.until = time(nullptr) +
+        constrain(server.arg("minutes").toInt(), 1, 10080) * 60;
+  } else {
+    manualOverride.until = 0;
+  }
+  if (manualOverride.off) allOff();
+  scheduleRuntimeStatus = String("Manual override: ") +
+                          manualOverride.description;
+  sendText(200, String("Manual override active: ") +
+                    manualOverride.description);
+}
+
+void serviceSchedules() {
+  if (millis() - lastScheduleCheckAt < 15000) return;
+  lastScheduleCheckAt = millis();
+  const time_t now = time(nullptr);
+  if (now <= 1700000000) {
+    scheduleRuntimeStatus = "Waiting for network time";
+    return;
+  }
+  if (manualOverride.active) {
+    if (manualOverride.until == 0 || now < manualOverride.until) {
+      scheduleRuntimeStatus = String("Manual override: ") +
+                              manualOverride.description;
+      return;
+    }
+    manualOverride = ManualOverride();
+    scheduleAppliedKey = "";
+  }
+  JsonDocument document;
+  String error;
+  if (!readScheduleDocument(document, error)) {
+    scheduleRuntimeStatus = error;
+    return;
+  }
+  const ScheduleDecision decision = evaluateSchedulesAt(document, now);
+  const String key = scheduleDecisionKey(decision);
+  if (!nextScheduleTransition || nextScheduleTransition <= now ||
+      key != scheduleAppliedKey) {
+    nextScheduleTransition = findNextScheduleTransition(document, now, decision);
+  }
+  if (!decision.managed) {
+    scheduleRuntimeStatus = "No enabled schedule rules";
+    scheduleAppliedKey = "";
+    return;
+  }
+  scheduleRuntimeStatus = decision.active
+      ? String(decision.holiday ? "Holiday: " : "Weekly: ") + decision.name
+      : "Scheduled off";
+  if (key == scheduleAppliedKey) return;
+  if (!decision.active) {
+    allOff();
+  } else if (!applyStoredPattern(decision.patternId, decision.zoneMask, error)) {
+    allOff();
+    scheduleRuntimeStatus = error;
+  }
+  scheduleAppliedKey = key;
 }
 
 void configureWebServer() {
@@ -2033,6 +2584,15 @@ void configureWebServer() {
   server.on("/api/patterns", HTTP_POST, []() {
     if (requireWebUiAuth()) handleSavePatternsBody();
   });
+  server.on("/api/schedules", HTTP_GET, []() {
+    if (requireWebUiAuth()) sendSchedulesJson();
+  });
+  server.on("/api/schedules", HTTP_POST, []() {
+    if (requireWebUiAuth()) handleSaveSchedules();
+  });
+  server.on("/api/manual-override", HTTP_POST, []() {
+    if (requireWebUiAuth()) handleManualOverride();
+  });
   server.on("/scanNetworksRSSI", HTTP_GET, []() {
     if (requireLegacyAccess()) handleScanNetworks();
   });
@@ -2059,6 +2619,7 @@ void configureWebServer() {
   server.on("/api/off", HTTP_GET, []() {
     if (!requireWebUiAuth()) return;
     allOff();
+    beginManualUntilNext("Lights off");
     sendText(200, "All zones off");
   });
   server.on("/api/preset/fast-fireworks", HTTP_GET, []() {
@@ -2068,6 +2629,7 @@ void configureWebServer() {
       if (zoneRegistered[zone]) mask |= 1U << zone;
     }
     startFastFireworks(mask);
+    beginManualUntilNext("Fourth of July: Fast Fireworks");
     sendText(200, "Fourth of July: Fast Fireworks running");
   });
   server.on("/api/zones", HTTP_POST, []() {
@@ -2200,8 +2762,10 @@ void setup() {
 
   loadConfiguration();
   initializePatternStorage();
+  initializeScheduleStorage();
   initializeLeds();
   configureWifi();
+  configTzTime(scheduleTimezone.c_str(), "pool.ntp.org", "time.nist.gov");
   configureWebServer();
   nextAutomaticUpdateAt = millis() + 60000;
   automaticUpdateStatus = automaticUpdates
@@ -2230,6 +2794,7 @@ void setup() {
 void loop() {
   server.handleClient();
   updateActivePattern();
+  serviceSchedules();
   serviceDdpSync();
   serviceAutomaticUpdates();
   if (Serial.available()) {
