@@ -191,6 +191,13 @@ slot without overwriting the running firmware.
 4. Keep the controller powered until the browser reports that verification
    completed. The controller then reboots into the new slot.
 
+After verification, the controller leaves a six-second response window before
+rebooting. The update drawer then reconnects for up to 90 seconds and confirms
+that the controller is running again. A brief browser connection error during
+the first upgrade from older firmware can still mean the old image rebooted
+before delivering its response; wait for the access point to return and reload
+the page before retrying.
+
 The update endpoint uses the current optional web-interface session. The
 connection remains plain local HTTP, so network admission through home Wi-Fi or
 WPA2 is the primary boundary. Do not expose the controller to the internet. If

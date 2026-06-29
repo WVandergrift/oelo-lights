@@ -43,7 +43,7 @@ constexpr char kDefaultCompatibilityApPassword[] = "LeafLights-Test";
 constexpr char kSetupAccessPointName[] = "LeafLights-Setup";
 constexpr char kSetupAccessPointPassword[] = "LeafLights-Setup";
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "0.7.0-dev"
+#define FIRMWARE_VERSION "0.7.1-dev"
 #endif
 constexpr char kFirmwareVersion[] = FIRMWARE_VERSION;
 constexpr char kGithubApiUrl[] =
@@ -585,8 +585,8 @@ void sendSessionCookie() {
                         "; Path=/; Max-Age=31536000; HttpOnly; SameSite=Strict");
 }
 
-void scheduleRestart() {
-  restartAt = millis() + 1500;
+void scheduleRestart(uint32_t delayMs = 1500) {
+  restartAt = millis() + delayMs;
 }
 
 bool ensureGithubClock(String& error) {
@@ -1806,7 +1806,7 @@ void handleFirmwareUploadComplete() {
     return;
   }
   sendText(200, "Firmware verified; rebooting into the update");
-  scheduleRestart();
+  scheduleRestart(6000);
 }
 
 void handleGithubReleases() {
@@ -1856,7 +1856,7 @@ void handleInstallGithubRelease() {
   }
   sendText(200, String("Release ") + release.tag +
                     " verified; rebooting into the update");
-  scheduleRestart();
+  scheduleRestart(6000);
 }
 
 void handleAutomaticUpdateConfiguration() {

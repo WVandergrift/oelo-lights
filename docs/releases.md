@@ -37,6 +37,11 @@ metadata.
 4. Read the notes shown inside the desired release card.
 5. Choose **Install**. The current web session authorizes the operation.
 
+Once the image is verified, the controller waits six seconds before rebooting.
+The persistent update drawer reconnects for up to 90 seconds and verifies that
+the selected release version is running. A connection reset after the image is
+fully transferred is treated as a possible reboot, not an immediate failure.
+
 The controller obtains release metadata from the public GitHub API, then
 downloads the selected `leaf-lights-tinys3.bin`. It validates TLS, repository
 path, content length, SHA-256, and ESP32 image structure before selecting the
