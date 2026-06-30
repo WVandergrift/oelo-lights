@@ -16,6 +16,7 @@
 #include <time.h>
 
 #include "github_roots.h"
+#include "preset_library.h"
 #include "web_ui.h"
 
 constexpr uint8_t kZoneCount = 6;
@@ -39,19 +40,21 @@ constexpr uint16_t kPowerBudgetMilliamps =
 constexpr uint8_t kMaximumBrightness =
     (255 * kPowerBudgetPercent) / 100;
 constexpr uint8_t kMaxPatternColors = 128;
-constexpr uint16_t kPatternLibraryVersion = 1;
+constexpr uint16_t kPatternLibraryVersion = 3;
 constexpr char kAccessPointName[] = "OELO_1-23.0";
 constexpr char kDefaultCompatibilityApPassword[] = "LeafLights-Test";
 constexpr char kSetupAccessPointName[] = "LeafLights-Setup";
 constexpr char kSetupAccessPointPassword[] = "LeafLights-Setup";
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "0.8.2-dev"
+#define FIRMWARE_VERSION "0.8.3-dev"
 #endif
 constexpr char kFirmwareVersion[] = FIRMWARE_VERSION;
 constexpr char kGithubApiUrl[] =
     "https://api.github.com/repos/WVandergrift/oelo-lights/releases?per_page=5";
 constexpr char kGithubDownloadPrefix[] =
     "https://github.com/WVandergrift/oelo-lights/releases/download/";
+constexpr char kSportsFeedBaseUrl[] =
+    "https://wvandergrift.github.io/oelo-lights/data/sports/teams/";
 constexpr char kReleaseAssetName[] = "leaf-lights-tinys3.bin";
 const IPAddress kAccessPointIp(172, 24, 1, 1);
 const IPAddress kAccessPointMask(255, 255, 255, 0);
@@ -137,6 +140,7 @@ struct ScheduleDecision {
   bool managed = false;
   bool active = false;
   bool holiday = false;
+  bool sports = false;
   int patternId = 0;
   uint8_t zoneMask = 0;
   int priority = -32768;
@@ -195,144 +199,38 @@ time_t nextScheduleTransition = 0;
 String scheduleRuntimeStatus = "Scheduling not configured";
 String scheduleAppliedKey;
 ManualOverride manualOverride;
+uint32_t lastSportsFeedCheckAt = 0;
+String sportsFeedStatus = "Not refreshed";
 
 void sendDdpFrame(bool force = false);
 void saveNetwork(const String& ssid, const String& password);
 void serviceSchedules();
 void beginManualUntilNext(const String& description);
+bool saveScheduleDocument(const String& json, String& error);
+bool refreshSportsScheduleFeed(String& error);
 
-const char kSeedPatterns[] PROGMEM = R"JSON([
-  {
-    "id": 1,
-    "name": "Fourth of July: Fast Fireworks",
-    "type": "twinkle",
-    "num_colors": 6,
-    "direction": "R",
-    "speed": 10,
-    "gap": 0,
-    "pause": 0,
-    "other": 0,
-    "colors": "255,255,255,0,0,255,0,0,255,255,255,255,255,0,0,255,0,0,"
-  },
-  {
-    "id": 2,
-    "name": "Liberty March",
-    "type": "march",
-    "num_colors": 24,
-    "direction": "F",
-    "speed": 18,
-    "gap": 0,
-    "pause": 0,
-    "other": 0,
-    "colors": "255,18,30,230,0,18,176,0,14,96,0,8,0,0,0,0,0,0,255,255,255,255,255,255,232,236,255,190,202,230,0,0,0,0,0,0,24,64,255,10,38,225,4,20,176,0,10,108,0,0,0,0,0,0,255,255,255,255,255,255,255,18,30,230,0,18,24,64,255,10,38,225,"
-  },
-  {
-    "id": 3,
-    "name": "Rocket's Red Glare",
-    "type": "bolt",
-    "num_colors": 8,
-    "direction": "F",
-    "speed": 20,
-    "gap": 0,
-    "pause": 0,
-    "other": 0,
-    "colors": "255,255,255,255,232,178,255,142,38,255,28,24,205,0,18,118,0,15,25,52,255,4,15,126,"
-  },
-  {
-    "id": 4,
-    "name": "Fifty Stars",
-    "type": "sprinkle",
-    "num_colors": 10,
-    "direction": "R",
-    "speed": 14,
-    "gap": 0,
-    "pause": 0,
-    "other": 0,
-    "colors": "255,255,255,255,255,255,218,232,255,255,255,255,34,82,255,18,48,220,6,18,130,255,28,34,210,0,22,255,255,255,"
-  },
-  {
-    "id": 5,
-    "name": "Freedom River",
-    "type": "river",
-    "num_colors": 9,
-    "direction": "R",
-    "speed": 15,
-    "gap": 0,
-    "pause": 0,
-    "other": 4,
-    "colors": "255,20,32,178,0,18,255,255,255,220,232,255,255,255,255,30,72,255,8,34,205,2,12,112,255,255,255,"
-  },
-  {
-    "id": 6,
-    "name": "Grand Finale Fireworks",
-    "type": "fireworks",
-    "num_colors": 9,
-    "direction": "F",
-    "speed": 19,
-    "gap": 0,
-    "pause": 0,
-    "other": 0,
-    "colors": "255,255,255,255,255,255,255,220,155,255,28,32,220,0,20,255,255,255,35,75,255,8,26,200,255,255,255,"
-  },
-  {
-    "id": 7,
-    "name": "American Wave",
-    "type": "blend",
-    "num_colors": 12,
-    "direction": "F",
-    "speed": 13,
-    "gap": 0,
-    "pause": 0,
-    "other": 0,
-    "colors": "118,0,14,205,0,22,255,28,36,255,160,150,255,255,255,220,235,255,112,160,255,30,82,255,8,34,205,2,12,112,30,82,255,220,235,255,"
-  },
-  {
-    "id": 8,
-    "name": "Stars & Stripes Chase",
-    "type": "chase",
-    "num_colors": 6,
-    "direction": "F",
-    "speed": 17,
-    "gap": 3,
-    "pause": 0,
-    "other": 5,
-    "colors": "255,22,34,214,0,22,255,255,255,230,238,255,28,68,255,6,24,178,"
-  },
-  {
-    "id": 9,
-    "name": "United We Split",
-    "type": "split",
-    "num_colors": 11,
-    "direction": "F",
-    "speed": 16,
-    "gap": 0,
-    "pause": 0,
-    "other": 0,
-    "colors": "255,20,32,190,0,20,80,0,10,0,0,0,255,255,255,225,235,255,0,0,0,5,20,120,18,52,225,35,80,255,255,255,255,"
-  },
-  {
-    "id": 10,
-    "name": "Dawn's Early Light",
-    "type": "fade",
-    "num_colors": 8,
-    "direction": "F",
-    "speed": 6,
-    "gap": 0,
-    "pause": 0,
-    "other": 0,
-    "colors": "1,8,60,8,30,145,30,78,255,198,220,255,255,248,225,255,142,116,235,24,34,125,0,16,"
-  }
-])JSON";
 
 const char kDefaultSchedules[] PROGMEM = R"JSON({
-  "version": 1,
+  "version": 2,
   "location": {
     "timezone": "CST6CDT,M3.2.0/2,M11.1.0/2",
     "latitude": 41.8781,
     "longitude": -87.6298
   },
   "weekly": [],
-  "holidays": []
+  "holidays": [],
+  "sports": {
+    "enabled": false,
+    "nightBefore": false,
+    "gameDay": true,
+    "includePreseason": false,
+    "on": {"type": "sunset", "offset": -20},
+    "off": {"type": "clock", "minutes": 1380},
+    "zones": 0,
+    "teams": [],
+    "events": [],
+    "lastUpdated": 0
+  }
 })JSON";
 
 String preferenceKey(const char* prefix, uint8_t zone) {
@@ -951,7 +849,15 @@ bool resolveDdpDestination(IPAddress& address) {
     address = resolvedDdpDestination;
     return true;
   }
-  if (!address.fromString(wledSync.destination) &&
+  if (wledSync.destination == "255.255.255.255" &&
+      WiFi.status() == WL_CONNECTED) {
+    const IPAddress local = WiFi.localIP();
+    const IPAddress mask = WiFi.subnetMask();
+    address = IPAddress(local[0] | static_cast<uint8_t>(~mask[0]),
+                        local[1] | static_cast<uint8_t>(~mask[1]),
+                        local[2] | static_cast<uint8_t>(~mask[2]),
+                        local[3] | static_cast<uint8_t>(~mask[3]));
+  } else if (!address.fromString(wledSync.destination) &&
       WiFi.hostByName(wledSync.destination.c_str(), address) != 1) {
     return false;
   }
@@ -2069,14 +1975,25 @@ void initializePatternStorage() {
   bool changed = false;
   for (JsonObjectConst builtIn : libraryDocument.as<JsonArrayConst>()) {
     const String name = builtIn["name"] | "";
-    bool exists = false;
-    for (JsonObjectConst saved : savedPatterns) {
-      if (name == String(saved["name"] | "")) {
-        exists = true;
+    const String presetKey = builtIn["presetKey"] | "";
+    JsonObject existing;
+    for (JsonObject saved : savedPatterns) {
+      const String savedKey = saved["presetKey"] | "";
+      if ((!presetKey.isEmpty() && presetKey == savedKey) ||
+          name == String(saved["name"] | "")) {
+        existing = saved;
         break;
       }
     }
-    if (exists) continue;
+    if (!existing.isNull()) {
+      // Add library metadata without replacing a user's edits to the effect.
+      existing["presetKey"] = presetKey;
+      existing["category"] = builtIn["category"] | "Other";
+      existing["tags"].set(builtIn["tags"]);
+      existing["builtin"] = true;
+      changed = true;
+      continue;
+    }
 
     JsonObject added = savedPatterns.add<JsonObject>();
     added.set(builtIn);
@@ -2286,6 +2203,57 @@ uint8_t configuredZoneMask(JsonObjectConst rule) {
   return requested ? requested & enabled : enabled;
 }
 
+bool sportsEventMatchesDate(JsonObjectConst event, JsonObjectConst sports,
+                            JsonObjectConst team, const tm& date) {
+  if (event["cancelled"] | false) return false;
+  if (String(event["teamKey"] | "") != String(team["key"] | "")) {
+    return false;
+  }
+  const String seasonType = event["seasonType"] | "";
+  if (!(sports["includePreseason"] | false) &&
+      seasonType.indexOf("pre") >= 0) {
+    return false;
+  }
+  const String homeAway = event["homeAway"] | "";
+  if (homeAway == "home" && !(team["includeHome"] | true)) return false;
+  if (homeAway == "away" && !(team["includeAway"] | true)) return false;
+  const time_t start = event["startEpoch"] | 0;
+  if (start <= 0) return false;
+  tm gameDate = {};
+  localtime_r(&start, &gameDate);
+  const int32_t difference = localDayNumber(gameDate) - localDayNumber(date);
+  return ((sports["gameDay"] | true) && difference == 0) ||
+         ((sports["nightBefore"] | false) && difference == 1);
+}
+
+JsonObjectConst sportsEventForDate(JsonObjectConst sports,
+                                   JsonObjectConst team, const tm& date) {
+  JsonObjectConst selected;
+  time_t selectedStart = 0;
+  for (JsonObjectConst event : sports["events"].as<JsonArrayConst>()) {
+    if (!sportsEventMatchesDate(event, sports, team, date)) continue;
+    const time_t start = event["startEpoch"] | 0;
+    if (selected.isNull() || start < selectedStart) {
+      selected = event;
+      selectedStart = start;
+    }
+  }
+  return selected;
+}
+
+bool sportsWindowActive(JsonObjectConst sports, bool currentEligible,
+                        bool previousEligible, time_t timestamp) {
+  tm current = {};
+  localtime_r(&timestamp, &current);
+  const int minute = current.tm_hour * 60 + current.tm_min;
+  const int on = resolveTimeExpression(sports["on"], current, timestamp);
+  const int off = resolveTimeExpression(sports["off"], current, timestamp);
+  if (on < 0 || off < 0) return false;
+  if (on < off) return currentEligible && minute >= on && minute < off;
+  return (currentEligible && minute >= on) ||
+         (previousEligible && minute < off);
+}
+
 ScheduleDecision evaluateSchedulesAt(JsonDocument& document,
                                      time_t timestamp) {
   ScheduleDecision result;
@@ -2294,6 +2262,31 @@ ScheduleDecision evaluateSchedulesAt(JsonDocument& document,
   localtime_r(&timestamp, &current);
   const time_t previousTimestamp = timestamp - 86400;
   localtime_r(&previousTimestamp, &previous);
+
+  JsonObjectConst sports = document["sports"].as<JsonObjectConst>();
+  if ((sports["enabled"] | false) &&
+      sports["teams"].is<JsonArray>() && sports["events"].is<JsonArray>()) {
+    for (JsonObjectConst team : sports["teams"].as<JsonArrayConst>()) {
+      if (!(team["enabled"] | true)) continue;
+      const JsonObjectConst currentEvent =
+          sportsEventForDate(sports, team, current);
+      const JsonObjectConst previousEvent =
+          sportsEventForDate(sports, team, previous);
+      if (currentEvent.isNull() && previousEvent.isNull()) continue;
+      result.managed = true;
+      result.sports = true;
+      result.priority = 1000;
+      result.active = sportsWindowActive(
+          sports, !currentEvent.isNull(), !previousEvent.isNull(), timestamp);
+      result.patternId = team["patternId"] | 0;
+      result.zoneMask = configuredZoneMask(sports);
+      const JsonObjectConst event =
+          !currentEvent.isNull() ? currentEvent : previousEvent;
+      result.name = String(team["name"] | "Sports") + " · " +
+                    String(event["gameName"] | "Game day");
+      return result;
+    }
+  }
 
   JsonArrayConst holidays = document["holidays"].as<JsonArrayConst>();
   for (JsonObjectConst rule : holidays) {
@@ -2335,6 +2328,7 @@ ScheduleDecision evaluateSchedulesAt(JsonDocument& document,
 
 String scheduleDecisionKey(const ScheduleDecision& decision) {
   return String(decision.managed) + ":" + String(decision.active) + ":" +
+         String(decision.sports) + ":" + String(decision.holiday) + ":" +
          decision.patternId + ":" + decision.zoneMask + ":" + decision.name;
 }
 
@@ -2422,6 +2416,33 @@ time_t findNextScheduleTransition(JsonDocument& document, time_t now,
     const time_t noon = mktime(&date);
     localtime_r(&noon, &date);
 
+    JsonObjectConst sports = document["sports"].as<JsonObjectConst>();
+    if ((sports["enabled"] | false) && sports["teams"].is<JsonArray>()) {
+      bool eligible = false;
+      for (JsonObjectConst team : sports["teams"].as<JsonArrayConst>()) {
+        if ((team["enabled"] | true) &&
+            !sportsEventForDate(sports, team, date).isNull()) {
+          eligible = true;
+          break;
+        }
+      }
+      if (eligible) {
+        const int on = resolveTimeExpression(sports["on"], date, noon);
+        const int off = resolveTimeExpression(sports["off"], date, noon);
+        considerScheduleBoundary(document, now,
+                                 localScheduleBoundary(date, 0), nearest);
+        considerScheduleBoundary(document, now,
+                                 localScheduleBoundary(date, 0, 1), nearest);
+        if (on >= 0 && off >= 0) {
+          considerScheduleBoundary(document, now,
+                                   localScheduleBoundary(date, on), nearest);
+          considerScheduleBoundary(document, now,
+                                   localScheduleBoundary(date, off,
+                                                         on >= off), nearest);
+        }
+      }
+    }
+
     for (JsonObjectConst rule : document["weekly"].as<JsonArrayConst>()) {
       if (!(rule["enabled"] | true) || !weeklyDateEligible(rule, date)) {
         continue;
@@ -2491,6 +2512,17 @@ void initializeScheduleStorage() {
       file.close();
     }
   }
+  JsonDocument existing;
+  String error;
+  if (readScheduleDocument(existing, error) && !existing["sports"].is<JsonObject>()) {
+    JsonDocument defaults;
+    if (!deserializeJson(defaults, kDefaultSchedules)) {
+      existing["sports"].set(defaults["sports"]);
+      String migrated;
+      serializeJson(existing, migrated);
+      saveScheduleDocument(migrated, error);
+    }
+  }
   loadScheduleLocation();
 }
 
@@ -2537,6 +2569,100 @@ bool saveScheduleDocument(const String& json, String& error) {
   return true;
 }
 
+bool refreshSportsScheduleFeed(String& error) {
+  JsonDocument schedules;
+  if (!readScheduleDocument(schedules, error)) return false;
+  JsonObject sports = schedules["sports"].as<JsonObject>();
+  if (sports.isNull() || !(sports["enabled"] | false)) {
+    sportsFeedStatus = "Sports automation disabled";
+    return true;
+  }
+  JsonArray teams = sports["teams"].as<JsonArray>();
+  if (teams.isNull() || teams.size() == 0) {
+    error = "Select at least one sports team";
+    return false;
+  }
+
+  JsonArray cached = sports["events"].to<JsonArray>();
+  uint16_t added = 0;
+  const time_t now = time(nullptr);
+  for (JsonObjectConst subscription : teams) {
+    if (!(subscription["enabled"] | true)) continue;
+    const String teamKey = subscription["key"] | "";
+    if (teamKey.isEmpty() || teamKey.length() > 80 ||
+        teamKey.indexOf("..") >= 0 || teamKey.indexOf('/') >= 0) {
+      continue;
+    }
+    WiFiClientSecure client;
+    HTTPClient http;
+    const String url = String(kSportsFeedBaseUrl) + teamKey + ".json";
+    if (!beginGithubRequest(http, client, url, error)) return false;
+    const int status = http.GET();
+    if (status != HTTP_CODE_OK) {
+      error = status > 0 ? String("Schedule feed returned HTTP ") + status +
+                               " for " + String(subscription["name"] | teamKey)
+                         : String("Schedule feed connection failed: ") +
+                               HTTPClient::errorToString(status);
+      http.end();
+      return false;
+    }
+    JsonDocument feed;
+    const DeserializationError parseError =
+        deserializeJson(feed, http.getStream());
+    http.end();
+    if (parseError || !feed["events"].is<JsonArray>()) {
+      error = String("Invalid schedule feed for ") +
+              String(subscription["name"] | teamKey);
+      return false;
+    }
+    for (JsonObjectConst event : feed["events"].as<JsonArrayConst>()) {
+      if (added >= 500) break;
+      const time_t eventStart = event["startEpoch"] | 0;
+      if (eventStart < now - 86400 || eventStart > now + 120 * 86400) {
+        continue;
+      }
+      JsonObject item = cached.add<JsonObject>();
+      item["id"] = event["id"] | "";
+      item["teamKey"] = teamKey;
+      item["gameName"] = event["name"] | "Game";
+      item["start"] = event["start"] | "";
+      item["startEpoch"] = event["startEpoch"] | 0;
+      item["seasonType"] = event["seasonType"] | "";
+      item["status"] = event["status"] | "";
+      item["cancelled"] = event["cancelled"] | false;
+      for (JsonObjectConst participant : event["teams"].as<JsonArrayConst>()) {
+        if (String(participant["key"] | "") == teamKey) {
+          item["homeAway"] = participant["homeAway"] | "";
+          break;
+        }
+      }
+      ++added;
+    }
+  }
+
+  sports["lastUpdated"] = now;
+  String serialized;
+  serializeJson(schedules, serialized);
+  if (!saveScheduleDocument(serialized, error)) return false;
+  preferences.putULong64("sportsFetch", static_cast<uint64_t>(now));
+  sportsFeedStatus = String("Updated ") + added + " upcoming team events";
+  return true;
+}
+
+void serviceSportsScheduleFeed() {
+  if (millis() < 20000 || millis() - lastSportsFeedCheckAt < 3600000) return;
+  lastSportsFeedCheckAt = millis();
+  if (WiFi.status() != WL_CONNECTED || time(nullptr) <= 1700000000) return;
+  JsonDocument schedules;
+  String error;
+  if (!readScheduleDocument(schedules, error)) return;
+  JsonObjectConst sports = schedules["sports"].as<JsonObjectConst>();
+  if (!(sports["enabled"] | false)) return;
+  const time_t lastUpdated = sports["lastUpdated"] | 0;
+  if (lastUpdated > 0 && time(nullptr) - lastUpdated < 21600) return;
+  if (!refreshSportsScheduleFeed(error)) sportsFeedStatus = error;
+}
+
 void sendSchedulesJson() {
   JsonDocument document;
   String error;
@@ -2553,6 +2679,7 @@ void sendSchedulesJson() {
   runtime["manualOverride"] = manualOverride.active;
   runtime["manualDescription"] = manualOverride.description;
   runtime["manualUntil"] = formatLocalTime(manualOverride.until);
+  runtime["sportsFeedStatus"] = sportsFeedStatus;
   String response;
   serializeJson(document, response);
   sendText(200, response, "application/json");
@@ -2655,7 +2782,8 @@ void serviceSchedules() {
     return;
   }
   scheduleRuntimeStatus = decision.active
-      ? String(decision.holiday ? "Holiday: " : "Weekly: ") + decision.name
+      ? String(decision.sports ? "Sports: " :
+               decision.holiday ? "Holiday: " : "Weekly: ") + decision.name
       : "Scheduled off";
   if (key == scheduleAppliedKey) return;
   if (!decision.active) {
@@ -2697,6 +2825,16 @@ void configureWebServer() {
   });
   server.on("/api/schedules", HTTP_POST, []() {
     if (requireWebUiAuth()) handleSaveSchedules();
+  });
+  server.on("/api/sports/refresh", HTTP_POST, []() {
+    if (!requireWebUiAuth()) return;
+    String error;
+    if (!refreshSportsScheduleFeed(error)) {
+      sportsFeedStatus = error;
+      sendText(502, error);
+      return;
+    }
+    sendText(200, sportsFeedStatus);
   });
   server.on("/api/manual-override", HTTP_POST, []() {
     if (requireWebUiAuth()) handleManualOverride();
@@ -2826,6 +2964,8 @@ void printHelp() {
   Serial.println("Commands:");
   Serial.println("  zone <0-5> <r> <g> <b>");
   Serial.printf("  brightness <1-%u>\n", kMaximumBrightness);
+  Serial.println("  wled on|off|status");
+  Serial.println("  wifi");
   Serial.println("  off");
   Serial.println("  status");
 }
@@ -2842,6 +2982,24 @@ void handleSerialCommand(String line) {
     Serial.printf("AP http://%s  LAN http://%s  leaflights.local\n",
                   WiFi.softAPIP().toString().c_str(),
                   WiFi.localIP().toString().c_str());
+  } else if (line == "wifi") {
+    Serial.printf("WiFi status=%d mode=%d LAN=%s RSSI=%d AP=%s clients=%u\n",
+                  static_cast<int>(WiFi.status()),
+                  static_cast<int>(WiFi.getMode()),
+                  WiFi.localIP().toString().c_str(), WiFi.RSSI(),
+                  WiFi.softAPIP().toString().c_str(),
+                  WiFi.softAPgetStationNum());
+  } else if (line == "wled status") {
+    Serial.printf("WLED sync %s: %s\n",
+                  wledSync.enabled ? "enabled" : "disabled",
+                  lastDdpStatus.c_str());
+  } else if (line == "wled off" || line == "wled on") {
+    wledSync.enabled = line.endsWith("on");
+    preferences.putBool("ddpEnabled", wledSync.enabled);
+    lastDdpStatus = wledSync.enabled ? "Waiting for frame" : "Disabled";
+    lastDdpFrameAt = 0;
+    Serial.printf("WLED sync %s and saved\n",
+                  wledSync.enabled ? "enabled" : "disabled");
   } else if (sscanf(line.c_str(), "zone %d %d %d %d",
                     &zone, &red, &green, &blue) == 4) {
     if (zone < 0 || zone >= kZoneCount || !zoneRegistered[zone]) {
@@ -2908,6 +3066,7 @@ void setup() {
 void loop() {
   server.handleClient();
   updateActivePattern();
+  serviceSportsScheduleFeed();
   serviceSchedules();
   serviceDdpSync();
   serviceAutomaticUpdates();

@@ -17,8 +17,8 @@ The sample firmware currently runs on an Unexpected Maker TinyS3 and provides:
 - four-step first-time onboarding for zones, network compatibility, and
   optional web-interface authentication;
 - compatibility with the LeafFilter app's offline Local AP Control mode;
-- controller-hosted offline pattern profiles and a ten-preset Independence Day
-  collection;
+- a 199-preset built-in library organized into Holidays, Special Occasions,
+  Seasons, and Sports Teams, with every NFL, NBA, WNBA, MLB, and NHL team;
 - non-blocking approximations of all 17 movement types exposed by the app plus
   a custom multi-burst fireworks engine;
 - optional realtime DDP broadcast of rendered frames to WLED controllers;
@@ -28,6 +28,8 @@ The sample firmware currently runs on an Unexpected Maker TinyS3 and provides:
   and opt-in automatic stable updates;
 - local seven-day and annual holiday scheduling with clock, sunrise, and sunset
   expressions plus until-next-event manual overrides;
+- automatic sports game-night scheduling with team-specific presets, home/away
+  filters, ordered conflict priority, and a six-hour static schedule feed;
 - the recovered **Fourth of July: Fast Fireworks** profile and nine original
   red, white, and blue presets.
 
@@ -63,9 +65,10 @@ pressed.
 
 ### Animated pattern library
 
-Saved profiles include an animated LED preview plus their movement, palette
-size, speed, direction, and gap. Profiles can be played, edited, or deleted
-without relying on the vendor cloud.
+Saved profiles include animated LED previews plus movement and palette details.
+The library provides category browsing, league filters, full-text search, and
+small result batches so it stays responsive on phones. Profiles can be played,
+edited, or deleted without relying on the vendor cloud.
 
 ![Saved pattern library with animated red, white, and blue previews](docs/images/patterns.jpg)
 

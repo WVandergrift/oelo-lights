@@ -1,4 +1,4 @@
-# Weekly and holiday scheduling
+# Weekly, holiday, and sports scheduling
 
 Leaf Lights evaluates schedules locally on the ESP32. Pattern playback does not
 depend on a cloud service, but the TinyS3 has no battery-backed real-time clock,
@@ -10,9 +10,10 @@ events can run.
 Only one layer controls the lights at a time:
 
 1. manual override;
-2. holiday override;
-3. weekly routine;
-4. off.
+2. sports game night;
+3. holiday override;
+4. weekly routine;
+5. off.
 
 A holiday override owns its entire date window, including the hours before its
 on time and after its off time. The weekly routine therefore cannot turn the
@@ -20,6 +21,24 @@ lights on during a holiday window unless the holiday rule itself says to do so.
 When several rules in the same layer overlap, the rule with the higher numeric
 priority wins. The browser creates weekly rules at priority `0` and holiday
 rules at priority `100`.
+
+## Sports game nights
+
+Sports automation subscribes to one or more team feeds and assigns a saved
+pattern to each team. A rule may cover the night before a game, game night, or
+both; may include home and/or away games; and may exclude preseason games.
+The shared on/off expressions are normally sunset-relative so daytime games do
+not leave the lights running during the day.
+
+Teams are stored in priority order. When two selected teams play on the same
+configured lighting date, the first eligible team wins. Sports owns that whole
+date just as a holiday owns its date window, so lower layers stay suppressed
+even before the sports lighting window begins.
+
+A scheduled GitHub Action refreshes league data every six hours and publishes
+normalized per-team JSON through GitHub Pages. Controllers cache only selected
+teams in LittleFS. Cached events continue to work during an internet outage;
+manual refresh is available from the Schedules page.
 
 ## Weekly routines
 
@@ -70,6 +89,7 @@ The project UI uses:
 GET  /api/schedules
 POST /api/schedules
 POST /api/manual-override
+POST /api/sports/refresh
 ```
 
 See [local-api.md](local-api.md) for the JSON shape and override fields.

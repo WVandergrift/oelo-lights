@@ -52,6 +52,11 @@ making the synchronized result too dim.
 - DDP is UDP and has no acknowledgement. “Streaming” means packets were handed
   to the network stack, not that a receiver confirmed display.
 - The limited broadcast address depends on the local router allowing LAN
-  broadcast traffic. If broadcast is filtered, configure a WLED device's IP.
+  broadcast traffic. The sender converts `255.255.255.255` to the home
+  network's directed broadcast address so DDP is not also emitted through the
+  compatibility access point. If broadcast is filtered, configure a WLED
+  device's IP.
+- USB serial recovery commands `wled status`, `wled off`, and `wled on` remain
+  available if a network configuration ever makes the browser unreachable.
 - When sync is disabled or the TinyS3 disappears, each WLED receiver returns to
   its prior state after its own realtime timeout.

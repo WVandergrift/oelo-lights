@@ -59,9 +59,12 @@ web interface can start the same configuration with one button.
 
 ## Independence Day collection
 
-Fresh controllers receive ten editable presets. Existing controllers merge any
-missing preset once when the built-in library version changes; user-created and
-edited profiles are not overwritten.
+Fresh controllers receive 199 editable presets. The original ten Independence
+Day looks are joined by Holiday, Special Occasion, Seasonal, and Sports Team
+collections. Sports includes every current NFL, NBA, WNBA, MLB, and NHL team and can
+be filtered by league. Existing controllers merge presets by a stable key when
+the built-in library version changes; IDs and user-edited effect settings are
+not overwritten.
 
 | Preset | Movement | Character |
 |---|---|---|

@@ -141,10 +141,10 @@ GET /saveNetwork?ssid=...&pw=...
 ```
 
 Saved patterns are persisted in LittleFS and exposed to the app's offline
-"Your Patterns" screen. A fresh filesystem is seeded with the recovered
-`Fourth of July: Fast Fireworks` preset plus nine original Independence Day
-presets. Firmware upgrades merge newly bundled presets without overwriting
-saved user patterns.
+"Your Patterns" screen. A fresh filesystem is seeded with 199 presets spanning
+Holidays, Special Occasions, Seasons, and every NFL, NBA, WNBA, MLB, and NHL team.
+Firmware upgrades merge newly bundled presets by stable key without changing
+existing IDs or overwriting user-edited effect settings.
 
 The non-blocking demo engine accepts every movement type exposed by the
 offline app: `stationary`, `arcade`/`pacman`, `blend`, `bolt`, `chase`, `fade`,
