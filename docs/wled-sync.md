@@ -20,11 +20,13 @@ translated to a different WLED animation.
 
 1. Configure the TinyS3 and WLED controllers on the same home Wi-Fi network.
 2. On each WLED controller, open **Config → Sync Interfaces**. Under realtime
-   input, enable **Force max brightness**. DDP reception itself is initialized
-   by WLED on UDP port 4048.
+   input, enable **Force max brightness**. Then open **Config → WiFi Setup** and
+   enable **Disable WiFi sleep** to reduce realtime packet jitter. DDP reception
+   itself is initialized by WLED on UDP port 4048.
 3. Open the TinyS3 UI and choose **Settings → WLED realtime sync**.
 4. Leave the destination at `255.255.255.255` to broadcast to all WLED devices
-   on the LAN. A specific WLED IPv4 address limits the stream to one receiver.
+   on the LAN. For one receiver, use its specific IPv4 address for smoother,
+   lower-jitter unicast delivery.
 5. Set **Virtual pixel count** to the receiving strip's LED count.
 6. Choose **Auto (first active)** or a fixed Oelo source zone, enable sync, and
    save.
@@ -43,8 +45,10 @@ making the synchronized result too dim.
 - The chosen Oelo source zone is resampled to the configured virtual count.
 - The maximum virtual output is 1,000 RGB pixels. Frames above 480 pixels are
   split into multiple DDP packets and pushed after the last packet.
-- Animated output is sent when a rendered frame changes, with a 30 ms minimum
+- Animated output is sent when a rendered frame changes, with a 25 ms minimum
   interval. A 750 ms heartbeat keeps stationary colors in WLED realtime mode.
+- The TinyS3 disables its own Wi-Fi modem sleep while connected and batches
+  each DDP packet into one UDP write to reduce sender-side latency variance.
 - DDP is UDP and has no acknowledgement. “Streaming” means packets were handed
   to the network stack, not that a receiver confirmed display.
 - The limited broadcast address depends on the local router allowing LAN

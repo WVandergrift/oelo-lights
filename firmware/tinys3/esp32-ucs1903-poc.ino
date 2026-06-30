@@ -24,6 +24,8 @@ constexpr uint16_t kMaxLogicalLeds = 1000;
 constexpr uint8_t kPhysicalPixelsPerFixture = 2;
 constexpr uint16_t kMaxPhysicalPixels =
     kMaxLogicalLeds * kPhysicalPixelsPerFixture;
+constexpr uint16_t kAnimationFrameIntervalMs = 25;
+constexpr uint16_t kDdpFrameIntervalMs = 25;
 constexpr uint8_t kDefaultBrightness = 32;
 // The installed 36 V, 5.6 A supply is capped at 80% of nameplate output.
 // This is a conservative global output cap, not active current measurement:
@@ -43,7 +45,7 @@ constexpr char kDefaultCompatibilityApPassword[] = "LeafLights-Test";
 constexpr char kSetupAccessPointName[] = "LeafLights-Setup";
 constexpr char kSetupAccessPointPassword[] = "LeafLights-Setup";
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "0.8.1-dev"
+#define FIRMWARE_VERSION "0.8.2-dev"
 #endif
 constexpr char kFirmwareVersion[] = FIRMWARE_VERSION;
 constexpr char kGithubApiUrl[] =
@@ -175,6 +177,10 @@ WledSyncConfig wledSync;
 uint8_t ddpSequence = 1;
 uint32_t lastDdpFrameAt = 0;
 String lastDdpStatus = "Disabled";
+IPAddress resolvedDdpDestination;
+String resolvedDdpDestinationName;
+bool resolvedDdpDestinationValid = false;
+uint16_t lastDdpStatusPixelCount = 0;
 bool otaUploadAuthorized = false;
 bool otaUploadSucceeded = false;
 String otaUploadError;
@@ -940,8 +946,19 @@ int8_t ddpSourceZone() {
 }
 
 bool resolveDdpDestination(IPAddress& address) {
-  if (address.fromString(wledSync.destination)) return true;
-  return WiFi.hostByName(wledSync.destination.c_str(), address) == 1;
+  if (resolvedDdpDestinationValid &&
+      resolvedDdpDestinationName == wledSync.destination) {
+    address = resolvedDdpDestination;
+    return true;
+  }
+  if (!address.fromString(wledSync.destination) &&
+      WiFi.hostByName(wledSync.destination.c_str(), address) != 1) {
+    return false;
+  }
+  resolvedDdpDestination = address;
+  resolvedDdpDestinationName = wledSync.destination;
+  resolvedDdpDestinationValid = true;
+  return true;
 }
 
 void sendDdpFrame(bool force) {
@@ -950,7 +967,7 @@ void sendDdpFrame(bool force) {
     return;
   }
   const uint32_t now = millis();
-  if (!force && now - lastDdpFrameAt < 30) return;
+  if (!force && now - lastDdpFrameAt < kDdpFrameIntervalMs) return;
 
   IPAddress destination;
   if (!resolveDdpDestination(destination)) {
@@ -965,7 +982,9 @@ void sendDdpFrame(bool force) {
 
   constexpr uint16_t kDdpPort = 4048;
   constexpr uint16_t kDdpChannelsPerPacket = 1440;
+  constexpr uint16_t kDdpHeaderLength = 10;
   constexpr uint16_t kDdpPixelsPerPacket = kDdpChannelsPerPacket / 3;
+  uint8_t packet[kDdpHeaderLength + kDdpChannelsPerPacket];
   const uint16_t outputCount =
       constrain(wledSync.pixelCount, 1, kMaxLogicalLeds);
   const uint16_t sourceCount = max<uint16_t>(zones[source].count, 1);
@@ -982,18 +1001,19 @@ void sendDdpFrame(bool force) {
       lastDdpStatus = "UDP send failed";
       return;
     }
-    ddpUdp.write(static_cast<uint8_t>(0x40 | (push ? 0x01 : 0x00)));
-    ddpUdp.write(ddpSequence++ & 0x0f);
+    packet[0] = static_cast<uint8_t>(0x40 | (push ? 0x01 : 0x00));
+    packet[1] = ddpSequence++ & 0x0f;
     if ((ddpSequence & 0x0f) == 0) ++ddpSequence;
-    ddpUdp.write(static_cast<uint8_t>(0x0b));  // RGB, 8 bits/channel.
-    ddpUdp.write(static_cast<uint8_t>(0x01));  // Default display output.
-    ddpUdp.write(static_cast<uint8_t>(channelOffset >> 24));
-    ddpUdp.write(static_cast<uint8_t>(channelOffset >> 16));
-    ddpUdp.write(static_cast<uint8_t>(channelOffset >> 8));
-    ddpUdp.write(static_cast<uint8_t>(channelOffset));
-    ddpUdp.write(static_cast<uint8_t>(dataLength >> 8));
-    ddpUdp.write(static_cast<uint8_t>(dataLength));
+    packet[2] = 0x0b;  // RGB, 8 bits/channel.
+    packet[3] = 0x01;  // Default display output.
+    packet[4] = static_cast<uint8_t>(channelOffset >> 24);
+    packet[5] = static_cast<uint8_t>(channelOffset >> 16);
+    packet[6] = static_cast<uint8_t>(channelOffset >> 8);
+    packet[7] = static_cast<uint8_t>(channelOffset);
+    packet[8] = static_cast<uint8_t>(dataLength >> 8);
+    packet[9] = static_cast<uint8_t>(dataLength);
 
+    uint16_t packetOffset = kDdpHeaderLength;
     for (uint16_t pixel = firstPixel;
          pixel < firstPixel + packetPixels; ++pixel) {
       const uint16_t sourceFixture =
@@ -1002,17 +1022,23 @@ void sendDdpFrame(bool force) {
                         sourceCount - 1);
       const CRGB& color =
           zonePixels[source][sourceFixture * kPhysicalPixelsPerFixture];
-      ddpUdp.write(scale8_video(color.r, brightness));
-      ddpUdp.write(scale8_video(color.g, brightness));
-      ddpUdp.write(scale8_video(color.b, brightness));
+      packet[packetOffset++] = scale8_video(color.r, brightness);
+      packet[packetOffset++] = scale8_video(color.g, brightness);
+      packet[packetOffset++] = scale8_video(color.b, brightness);
     }
-    if (!ddpUdp.endPacket()) {
+    const size_t written = ddpUdp.write(packet, packetOffset);
+    const bool packetSent = ddpUdp.endPacket();
+    if (written != packetOffset || !packetSent) {
       lastDdpStatus = "UDP send failed";
       return;
     }
   }
   lastDdpFrameAt = now;
-  lastDdpStatus = String("Streaming ") + outputCount + " pixels";
+  if (!lastDdpStatus.startsWith("Streaming") ||
+      lastDdpStatusPixelCount != outputCount) {
+    lastDdpStatus = String("Streaming ") + outputCount + " pixels";
+    lastDdpStatusPixelCount = outputCount;
+  }
 }
 
 void serviceDdpSync() {
@@ -1346,7 +1372,7 @@ void startPattern(const String& requestedType, uint8_t zoneMask,
 void updateActivePattern() {
   if (!activePattern.running || activePattern.zoneMask == 0) return;
   const uint32_t now = millis();
-  if (now - activePattern.lastFrameAt < 35) return;
+  if (now - activePattern.lastFrameAt < kAnimationFrameIntervalMs) return;
   activePattern.lastFrameAt = now;
   const bool stepDue = now - activePattern.lastStepAt >= patternStepInterval();
   bool changed = false;
@@ -1819,6 +1845,8 @@ void handleWledSyncConfiguration() {
   wledSync.destination = destination;
   wledSync.pixelCount = pixels;
   wledSync.sourceZone = source;
+  resolvedDdpDestinationValid = false;
+  resolvedDdpDestinationName = "";
   preferences.putBool("ddpEnabled", wledSync.enabled);
   preferences.putString("ddpDest", wledSync.destination);
   preferences.putUShort("ddpPixels", wledSync.pixelCount);
@@ -2782,6 +2810,12 @@ void configureWifi() {
         kSetupAccessPointName, kSetupAccessPointPassword);
     compatibilityApFallback = setupApActive;
   }
+
+  // Realtime DDP depends on predictable packet latency. ESP32 modem sleep can
+  // batch outgoing UDP traffic and produce visible pauses followed by bursts.
+  if (WiFi.status() == WL_CONNECTED) WiFi.setSleep(false);
+  resolvedDdpDestinationValid = false;
+  resolvedDdpDestinationName = "";
 
   if (WiFi.status() == WL_CONNECTED && MDNS.begin("leaflights")) {
     MDNS.addService("http", "tcp", 80);

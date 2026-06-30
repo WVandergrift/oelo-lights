@@ -171,10 +171,14 @@ Configure home Wi-Fi first, then open **Settings → WLED realtime sync**:
 - use **Auto** to copy the first zone in the active pattern, or choose a fixed
   source zone;
 - enable **Force max brightness** on each WLED receiver under its realtime/sync
-  settings because the outgoing RGB frame already includes TinyS3 brightness.
+  settings because the outgoing RGB frame already includes TinyS3 brightness;
+- enable **Disable WiFi sleep** under WLED's WiFi setup page. WLED recommends
+  this for reducing realtime stutter and latency;
+- prefer a receiver's IP address over `255.255.255.255` when synchronizing one
+  device. Unicast is less susceptible to Wi-Fi broadcast jitter.
 
 Static colors are refreshed every 750 ms so WLED remains in realtime mode.
-Animated patterns send each rendered frame, capped at roughly 33 frames per
+Animated patterns send each rendered frame, capped at roughly 40 frames per
 second. Disabling sync stops the stream; WLED resumes its previous state after
 its configured realtime timeout. See
 [../../docs/wled-sync.md](../../docs/wled-sync.md) for limitations.
