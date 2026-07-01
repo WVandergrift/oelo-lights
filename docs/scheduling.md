@@ -40,6 +40,19 @@ normalized per-team JSON through GitHub Pages. Controllers cache only selected
 teams in LittleFS. Cached events continue to work during an internet outage;
 manual refresh is available from the Schedules page.
 
+## Calendar view
+
+The Schedules page projects weekly, holiday, and cached sports rules onto a
+month calendar. Desktop uses a seven-column month grid; smaller screens switch
+to a chronological agenda. Each date shows only the rule that will control the
+lights after applying priority, along with its time window, selected pattern,
+animated LED preview, and a count of any rules it suppresses.
+
+The calendar is a projection of locally cached data. Newly changed or postponed
+sports events appear after the next automatic or manual feed refresh. Manual
+overrides remain runtime state and are reported in the status summary rather
+than being projected across future dates.
+
 ## Weekly routines
 
 A weekly rule stores its days, on/off expressions, saved pattern ID, zone

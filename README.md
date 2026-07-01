@@ -30,6 +30,8 @@ The sample firmware currently runs on an Unexpected Maker TinyS3 and provides:
   expressions plus until-next-event manual overrides;
 - automatic sports game-night scheduling with team-specific presets, home/away
   filters, ordered conflict priority, and a six-hour static schedule feed;
+- a responsive month calendar/mobile agenda showing the winning lighting rule,
+  schedule conflicts, time window, and animated pattern preview for each date;
 - the recovered **Fourth of July: Fast Fireworks** profile and nine original
   red, white, and blue presets.
 
