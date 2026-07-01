@@ -46,7 +46,7 @@ constexpr char kDefaultCompatibilityApPassword[] = "LeafLights-Test";
 constexpr char kSetupAccessPointName[] = "LeafLights-Setup";
 constexpr char kSetupAccessPointPassword[] = "LeafLights-Setup";
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "0.8.3-dev"
+#define FIRMWARE_VERSION "0.9.2-dev"
 #endif
 constexpr char kFirmwareVersion[] = FIRMWARE_VERSION;
 constexpr char kGithubApiUrl[] =
@@ -155,6 +155,9 @@ struct ManualOverride {
 };
 
 CRGB zonePixels[kZoneCount][kMaxPhysicalPixels];
+// Keep the remote-update transfer buffer out of the Arduino loop-task stack.
+// TLS, HTTP redirects, SHA-256, and Update already consume substantial stack.
+uint8_t firmwareDownloadBuffer[2048];
 ZoneConfig zones[kZoneCount];
 bool zoneRegistered[kZoneCount] = {};
 uint8_t brightness = kDefaultBrightness;
@@ -648,6 +651,11 @@ bool installGithubRelease(const GithubRelease& release, String& error) {
   if (!beginGithubRequest(http, client, release.downloadUrl, error)) {
     return false;
   }
+  // Release assets redirect to GitHub's asset CDN and may pause between TLS
+  // records while flash sectors are erased. These timeouts are deliberately
+  // longer than the small metadata requests above.
+  client.setTimeout(30);
+  http.setTimeout(60000);
   const int status = http.GET();
   if (status != HTTP_CODE_OK) {
     error = status > 0 ? String("Firmware download returned HTTP ") + status
@@ -674,26 +682,29 @@ bool installGithubRelease(const GithubRelease& release, String& error) {
   mbedtls_sha256_init(&hashContext);
   mbedtls_sha256_starts_ret(&hashContext, 0);
   WiFiClient* stream = http.getStreamPtr();
-  uint8_t buffer[4096];
   size_t written = 0;
   uint32_t lastDataAt = millis();
   while (written < release.size) {
     const size_t available = stream->available();
     if (available > 0) {
-      const size_t wanted = min<size_t>(sizeof(buffer),
+      const size_t wanted = min<size_t>(sizeof(firmwareDownloadBuffer),
           min<size_t>(available, release.size - written));
-      const size_t received = stream->readBytes(buffer, wanted);
+      const size_t received =
+          stream->readBytes(firmwareDownloadBuffer, wanted);
       if (received == 0) continue;
-      if (Update.write(buffer, received) != received) {
+      if (Update.write(firmwareDownloadBuffer, received) != received) {
         error = Update.errorString();
         break;
       }
-      mbedtls_sha256_update_ret(&hashContext, buffer, received);
+      mbedtls_sha256_update_ret(&hashContext, firmwareDownloadBuffer,
+                                received);
       written += received;
       lastDataAt = millis();
+      delay(1);
     } else {
-      if (!http.connected() || millis() - lastDataAt > 20000) {
-        error = "Firmware download ended before the complete image arrived";
+      if (!http.connected() || millis() - lastDataAt > 60000) {
+        error = String("Firmware download stopped after ") + written +
+                " of " + release.size + " bytes";
         break;
       }
       delay(1);
