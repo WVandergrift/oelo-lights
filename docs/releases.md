@@ -3,7 +3,8 @@
 Firmware releases are the update channel for installed controllers. A release
 contains:
 
-- `leaf-lights-tinys3.bin`, the browser/OTA firmware image;
+- `leaf-lights-tinys3.bin`, the TinyS3 browser/OTA firmware image;
+- `leaf-lights-gledopto-esp32.bin`, the GLEDOPTO ESP32 browser/OTA image;
 - `SHA256SUMS`, a human-readable checksum file;
 - GitHub release notes generated from changes since the previous release.
 
@@ -20,10 +21,10 @@ git tag v0.4.0
 git push origin v0.4.0
 ```
 
-The workflow builds the TinyS3 image with the tag injected as its reported
+The workflow builds both board images with the tag injected as their reported
 firmware version, calculates `SHA256SUMS`, creates the GitHub release with
-generated notes, and uploads both assets. Normal branch and pull-request builds
-continue to run through `.github/workflows/platformio.yml`.
+generated notes, and uploads both binaries plus the checksum file. Normal
+branch and pull-request builds continue through `.github/workflows/platformio.yml`.
 
 Do not replace an asset on an existing release. Publish a higher patch version
 so controllers can compare versions and GitHub produces new immutable asset

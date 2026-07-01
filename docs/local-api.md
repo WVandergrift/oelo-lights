@@ -195,6 +195,29 @@ recovery AP rather than leaving the controller unreachable.
 
 `POST /api/restart` schedules a controlled controller restart.
 
+`GET /api/status` includes a `powerSafety` object with the configured voltage,
+current ceiling, per-pixel full-white estimate, estimated current and watts,
+utilization percentage, and whether the automatic limiter is active. These are
+calculated estimates; `activeMeasurement` is `false` because the controller has
+no current-sense hardware.
+
+`GET /api/layout` returns the versioned 2D lighting layout. Each path maps a
+controller and zone to two or more canvas coordinates plus its logical sample
+count, direction, spatial scale, and layer. `POST /api/layout` validates canvas
+dimensions, path limits, coordinate bounds, and mapping values before replacing
+the layout atomically.
+
+`GET /api/backup` streams a versioned JSON backup containing the 2D layout, zones,
+brightness, WLED sync, update and compatibility-network preferences, saved
+patterns, schedules, and power-limit configuration. It deliberately excludes
+Wi-Fi credentials,
+compatibility-network passwords, web-password hashes, and session tokens.
+
+The browser restores a backup through the validated `POST /api/patterns` and
+`POST /api/schedules` endpoints, then sends the small controller-settings
+record to `POST /api/restore-settings`. Settings are applied last and the
+controller reboots so restored zone hardware configuration takes effect.
+
 `POST /api/update` accepts a multipart `.bin` firmware image. The image is
 streamed to the inactive OTA slot, verified by the ESP32 Update library,
 activated, and followed by a controlled reboot.

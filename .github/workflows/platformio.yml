@@ -25,6 +25,10 @@ jobs:
         working-directory: firmware/tinys3
         run: platformio run -e um_tinys3
 
+      - name: Build GLEDOPTO ESP32 firmware
+        working-directory: firmware/tinys3
+        run: platformio run -e gledopto_esp32
+
       - name: Build TinyS3 USB diagnostic
         working-directory: firmware/tinys3
         run: platformio run -e um_tinys3_diagnostic

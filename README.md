@@ -26,6 +26,14 @@ The sample firmware currently runs on an Unexpected Maker TinyS3 and provides:
   the optional web-interface login session;
 - GitHub release discovery, release-note review, selected-version installation,
   and opt-in automatic stable updates;
+- downloadable JSON backups and validated restore for zones, controller
+  preferences, saved patterns, and schedules, without exporting passwords;
+- a persistent 2D layout designer for positioning straight or bent lighting
+  runs by controller, zone, direction, density, scale, and layer;
+- per-zone UCS1903 or WS281x output, selectable GPIO, RGB byte order, and
+  one- or two-physical-pixels-per-fixture mapping;
+- a live green-to-red estimated power gauge and configurable automatic current
+  limiter with presets for the LINOVISION PoE++ splitter outputs;
 - local seven-day and annual holiday scheduling with clock, sunrise, and sunset
   expressions plus until-next-event manual overrides;
 - automatic sports game-night scheduling with team-specific presets, home/away

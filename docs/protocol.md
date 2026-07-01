@@ -3,7 +3,8 @@
 ## Summary
 
 Firmware version 1.78 drives six independent strings of clockless UCS1903 RGB
-pixels using the ESP32 RMT peripheral and FastLED's `UCS1903` controller.
+pixels. The replacement firmware additionally allows each zone to select a
+FastLED WS281x-compatible controller, GPIO, color order, and physical mapping.
 
 | Property | Recovered value |
 |---|---|
@@ -15,7 +16,7 @@ pixels using the ESP32 RMT peripheral and FastLED's `UCS1903` controller.
 | Pixel payload | 3 bytes, most-significant bit first |
 | Reset/latch | At least 50 us low |
 | Default color order | GBR |
-| Logical-to-physical mapping | 1 fixture to 2 consecutive RGB pixels |
+| Logical-to-physical mapping | UCS1903 default: 1 fixture to 2 consecutive RGB pixels |
 
 The recovered FastLED timing tuple is:
 
@@ -57,8 +58,10 @@ fixture 2 -> physical pixels 4 and 5
 ...
 ```
 
-The sample firmware preserves this behavior. Application and web settings use
-fixture counts; callers do not manually double them.
+The replacement firmware preserves this behavior by default. WS281x runs
+normally use one physical pixel per logical fixture, producing a direct 1:1
+mapping. Either mapping remains selectable per zone. Application and web
+settings use logical counts; callers do not manually double them.
 
 ## Color ordering
 

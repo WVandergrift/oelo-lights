@@ -44,21 +44,22 @@ jobs:
           path.write_text(source)
           PY
 
-      - name: Build versioned TinyS3 firmware
+      - name: Build versioned firmware
         working-directory: firmware/tinys3
-        run: platformio run -e um_tinys3
+        run: platformio run -e um_tinys3 -e gledopto_esp32
 
       - name: Prepare release assets
         run: |
           cp firmware/tinys3/.pio/build/um_tinys3/firmware.bin leaf-lights-tinys3.bin
-          sha256sum leaf-lights-tinys3.bin > SHA256SUMS
+          cp firmware/tinys3/.pio/build/gledopto_esp32/firmware.bin leaf-lights-gledopto-esp32.bin
+          sha256sum leaf-lights-tinys3.bin leaf-lights-gledopto-esp32.bin > SHA256SUMS
 
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: >-
           gh release create "${GITHUB_REF_NAME}"
-          leaf-lights-tinys3.bin SHA256SUMS
+          leaf-lights-tinys3.bin leaf-lights-gledopto-esp32.bin SHA256SUMS
           --verify-tag
           --generate-notes
           --title "Leaf Lights ${GITHUB_REF_NAME}"

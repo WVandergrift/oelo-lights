@@ -19,12 +19,17 @@
 #include "preset_library.h"
 #include "web_ui.h"
 
+#ifdef GLEDOPTO_ESP32
+constexpr uint8_t kZoneCount = 2;
+constexpr uint8_t kZonePins[kZoneCount] = {16, 2};
+#else
 constexpr uint8_t kZoneCount = 6;
 constexpr uint8_t kZonePins[kZoneCount] = {1, 2, 4, 5, 6, 7};
+#endif
 constexpr uint16_t kMaxLogicalLeds = 1000;
-constexpr uint8_t kPhysicalPixelsPerFixture = 2;
+constexpr uint8_t kMaxPhysicalPixelsPerFixture = 2;
 constexpr uint16_t kMaxPhysicalPixels =
-    kMaxLogicalLeds * kPhysicalPixelsPerFixture;
+    kMaxLogicalLeds * kMaxPhysicalPixelsPerFixture;
 constexpr uint16_t kAnimationFrameIntervalMs = 25;
 constexpr uint16_t kDdpFrameIntervalMs = 25;
 constexpr uint8_t kDefaultBrightness = 32;
@@ -46,7 +51,7 @@ constexpr char kDefaultCompatibilityApPassword[] = "LeafLights-Test";
 constexpr char kSetupAccessPointName[] = "LeafLights-Setup";
 constexpr char kSetupAccessPointPassword[] = "LeafLights-Setup";
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "0.9.2-dev"
+#define FIRMWARE_VERSION "0.10.0-dev"
 #endif
 constexpr char kFirmwareVersion[] = FIRMWARE_VERSION;
 constexpr char kGithubApiUrl[] =
@@ -55,7 +60,11 @@ constexpr char kGithubDownloadPrefix[] =
     "https://github.com/WVandergrift/oelo-lights/releases/download/";
 constexpr char kSportsFeedBaseUrl[] =
     "https://wvandergrift.github.io/oelo-lights/data/sports/teams/";
+#ifdef GLEDOPTO_ESP32
+constexpr char kReleaseAssetName[] = "leaf-lights-gledopto-esp32.bin";
+#else
 constexpr char kReleaseAssetName[] = "leaf-lights-tinys3.bin";
+#endif
 const IPAddress kAccessPointIp(172, 24, 1, 1);
 const IPAddress kAccessPointMask(255, 255, 255, 0);
 
@@ -64,6 +73,9 @@ struct ZoneConfig {
   uint16_t count = 1;
   String name;
   String order = "GBR";
+  String protocol = "UCS1903";
+  uint8_t gpio = 0;
+  uint8_t physicalPixelsPerFixture = 2;
 };
 
 enum class PatternKind : uint8_t {
@@ -139,6 +151,7 @@ struct GithubRelease {
 struct ScheduleDecision {
   bool managed = false;
   bool active = false;
+  bool oneOff = false;
   bool holiday = false;
   bool sports = false;
   int patternId = 0;
@@ -161,6 +174,10 @@ uint8_t firmwareDownloadBuffer[2048];
 ZoneConfig zones[kZoneCount];
 bool zoneRegistered[kZoneCount] = {};
 uint8_t brightness = kDefaultBrightness;
+bool automaticPowerLimit = false;
+uint8_t configuredLedVolts = kPowerSupplyVolts;
+uint16_t configuredPowerMilliamps = kPowerSupplyMilliamps;
+uint8_t configuredMilliampsPerPixel = 55;
 PatternState activePattern;
 FireworkBurst fireworkBursts[kZoneCount];
 
@@ -206,6 +223,8 @@ uint32_t lastSportsFeedCheckAt = 0;
 String sportsFeedStatus = "Not refreshed";
 
 void sendDdpFrame(bool force = false);
+uint32_t estimateLedMilliamps();
+void showLeds();
 void saveNetwork(const String& ssid, const String& password);
 void serviceSchedules();
 void beginManualUntilNext(const String& description);
@@ -214,7 +233,7 @@ bool refreshSportsScheduleFeed(String& error);
 
 
 const char kDefaultSchedules[] PROGMEM = R"JSON({
-  "version": 2,
+  "version": 3,
   "location": {
     "timezone": "CST6CDT,M3.2.0/2,M11.1.0/2",
     "latitude": 41.8781,
@@ -222,6 +241,7 @@ const char kDefaultSchedules[] PROGMEM = R"JSON({
   },
   "weekly": [],
   "holidays": [],
+  "oneOff": [],
   "sports": {
     "enabled": false,
     "nightBefore": false,
@@ -243,6 +263,29 @@ String preferenceKey(const char* prefix, uint8_t zone) {
 bool validColorOrder(const String& value) {
   return value == "RGB" || value == "RBG" || value == "GRB" ||
          value == "GBR" || value == "BRG" || value == "BGR";
+}
+
+bool validLedProtocol(const String& value) {
+  return value == "UCS1903" || value == "WS281x";
+}
+
+bool validZoneGpio(uint8_t gpio) {
+#ifdef GLEDOPTO_ESP32
+  return gpio == 2 || gpio == 16;
+#else
+  return gpio == 1 || gpio == 2 || gpio == 4 || gpio == 5 || gpio == 6 ||
+         gpio == 7;
+#endif
+}
+
+bool enabledZoneGpiosAreUnique() {
+  for (uint8_t i = 0; i < kZoneCount; ++i) {
+    if (!zones[i].enabled) continue;
+    for (uint8_t j = i + 1; j < kZoneCount; ++j) {
+      if (zones[j].enabled && zones[i].gpio == zones[j].gpio) return false;
+    }
+  }
+  return true;
 }
 
 void loadConfiguration() {
@@ -275,6 +318,13 @@ void loadConfiguration() {
   if (brightness != savedBrightness) {
     preferences.putUChar("brightness", brightness);
   }
+  automaticPowerLimit = preferences.getBool("pwrLimit", false);
+  configuredLedVolts = constrain(
+      preferences.getUChar("pwrVolts", kPowerSupplyVolts), 5, 36);
+  configuredPowerMilliamps = constrain(
+      preferences.getUShort("pwrMa", kPowerSupplyMilliamps), 100, 30000);
+  configuredMilliampsPerPixel = constrain(
+      preferences.getUChar("pixelMa", 55), 1, 100);
   wledSync.enabled = preferences.getBool("ddpEnabled", false);
   wledSync.destination =
       preferences.getString("ddpDest", "255.255.255.255");
@@ -289,6 +339,9 @@ void loadConfiguration() {
     const String enabledKey = preferenceKey("en", i);
     const String nameKey = preferenceKey("name", i);
     const String orderKey = preferenceKey("ord", i);
+    const String protocolKey = preferenceKey("proto", i);
+    const String gpioKey = preferenceKey("gpio", i);
+    const String physicalKey = preferenceKey("phys", i);
     zones[i].count = constrain(
         preferences.getUShort(countKey.c_str(), 1), 1, kMaxLogicalLeds);
     zones[i].enabled = preferences.getBool(enabledKey.c_str(), i == 0);
@@ -298,6 +351,13 @@ void loadConfiguration() {
     if (!validColorOrder(zones[i].order)) {
       zones[i].order = "GBR";
     }
+    zones[i].protocol = preferences.getString(protocolKey.c_str(), "UCS1903");
+    if (!validLedProtocol(zones[i].protocol)) zones[i].protocol = "UCS1903";
+    zones[i].gpio = preferences.getUChar(gpioKey.c_str(), kZonePins[i]);
+    if (!validZoneGpio(zones[i].gpio)) zones[i].gpio = kZonePins[i];
+    zones[i].physicalPixelsPerFixture = constrain(
+        preferences.getUChar(physicalKey.c_str(), 2), 1,
+        kMaxPhysicalPixelsPerFixture);
   }
 }
 
@@ -307,27 +367,40 @@ void saveZoneConfiguration() {
     preferences.putBool(preferenceKey("en", i).c_str(), zones[i].enabled);
     preferences.putString(preferenceKey("name", i).c_str(), zones[i].name);
     preferences.putString(preferenceKey("ord", i).c_str(), zones[i].order);
+    preferences.putString(preferenceKey("proto", i).c_str(), zones[i].protocol);
+    preferences.putUChar(preferenceKey("gpio", i).c_str(), zones[i].gpio);
+    preferences.putUChar(preferenceKey("phys", i).c_str(),
+                         zones[i].physicalPixelsPerFixture);
+  }
+}
+
+template <uint8_t Pin, EOrder Order>
+void registerZoneWithOrder(uint8_t zone, uint16_t physicalCount) {
+  if (zones[zone].protocol == "WS281x") {
+    FastLED.addLeds<WS2812B, Pin, Order>(zonePixels[zone], physicalCount);
+  } else {
+    FastLED.addLeds<UCS1903, Pin, Order>(zonePixels[zone], physicalCount);
   }
 }
 
 template <uint8_t Pin>
 void registerZoneForPin(uint8_t zone) {
   const uint16_t physicalCount =
-      zones[zone].count * kPhysicalPixelsPerFixture;
+      zones[zone].count * zones[zone].physicalPixelsPerFixture;
   const String& order = zones[zone].order;
 
   if (order == "RGB") {
-    FastLED.addLeds<UCS1903, Pin, RGB>(zonePixels[zone], physicalCount);
+    registerZoneWithOrder<Pin, RGB>(zone, physicalCount);
   } else if (order == "RBG") {
-    FastLED.addLeds<UCS1903, Pin, RBG>(zonePixels[zone], physicalCount);
+    registerZoneWithOrder<Pin, RBG>(zone, physicalCount);
   } else if (order == "GRB") {
-    FastLED.addLeds<UCS1903, Pin, GRB>(zonePixels[zone], physicalCount);
+    registerZoneWithOrder<Pin, GRB>(zone, physicalCount);
   } else if (order == "BRG") {
-    FastLED.addLeds<UCS1903, Pin, BRG>(zonePixels[zone], physicalCount);
+    registerZoneWithOrder<Pin, BRG>(zone, physicalCount);
   } else if (order == "BGR") {
-    FastLED.addLeds<UCS1903, Pin, BGR>(zonePixels[zone], physicalCount);
+    registerZoneWithOrder<Pin, BGR>(zone, physicalCount);
   } else {
-    FastLED.addLeds<UCS1903, Pin, GBR>(zonePixels[zone], physicalCount);
+    registerZoneWithOrder<Pin, GBR>(zone, physicalCount);
   }
   zoneRegistered[zone] = true;
 }
@@ -336,14 +409,21 @@ void registerZone(uint8_t zone) {
   if (!zones[zone].enabled) {
     return;
   }
-  switch (zone) {
-    case 0: registerZoneForPin<1>(zone); break;
-    case 1: registerZoneForPin<2>(zone); break;
-    case 2: registerZoneForPin<4>(zone); break;
-    case 3: registerZoneForPin<5>(zone); break;
-    case 4: registerZoneForPin<6>(zone); break;
-    case 5: registerZoneForPin<7>(zone); break;
+#ifdef GLEDOPTO_ESP32
+  switch (zones[zone].gpio) {
+    case 2: registerZoneForPin<2>(zone); break;
+    case 16: registerZoneForPin<16>(zone); break;
   }
+#else
+  switch (zones[zone].gpio) {
+    case 1: registerZoneForPin<1>(zone); break;
+    case 2: registerZoneForPin<2>(zone); break;
+    case 4: registerZoneForPin<4>(zone); break;
+    case 5: registerZoneForPin<5>(zone); break;
+    case 6: registerZoneForPin<6>(zone); break;
+    case 7: registerZoneForPin<7>(zone); break;
+  }
+#endif
 }
 
 void initializeLeds() {
@@ -359,9 +439,11 @@ void setLogicalFixture(uint8_t zone, uint16_t fixture, const CRGB& color) {
       fixture >= zones[zone].count) {
     return;
   }
-  const uint16_t physical = fixture * kPhysicalPixelsPerFixture;
-  zonePixels[zone][physical] = color;
-  zonePixels[zone][physical + 1] = color;
+  const uint16_t physical =
+      fixture * zones[zone].physicalPixelsPerFixture;
+  for (uint8_t copy = 0; copy < zones[zone].physicalPixelsPerFixture; ++copy) {
+    zonePixels[zone][physical + copy] = color;
+  }
 }
 
 void fillZone(uint8_t zone, const CRGB& color) {
@@ -369,7 +451,7 @@ void fillZone(uint8_t zone, const CRGB& color) {
     return;
   }
   fill_solid(zonePixels[zone],
-             zones[zone].count * kPhysicalPixelsPerFixture, color);
+             zones[zone].count * zones[zone].physicalPixelsPerFixture, color);
 }
 
 void allOff() {
@@ -384,7 +466,7 @@ void allOff() {
   for (uint8_t zone = 0; zone < kZoneCount; ++zone) {
     fillZone(zone, CRGB::Black);
   }
-  FastLED.show();
+  showLeds();
   sendDdpFrame(true);
 }
 
@@ -938,7 +1020,8 @@ void sendDdpFrame(bool force) {
                             outputCount,
                         sourceCount - 1);
       const CRGB& color =
-          zonePixels[source][sourceFixture * kPhysicalPixelsPerFixture];
+          zonePixels[source][sourceFixture *
+                             zones[source].physicalPixelsPerFixture];
       packet[packetOffset++] = scale8_video(color.r, brightness);
       packet[packetOffset++] = scale8_video(color.g, brightness);
       packet[packetOffset++] = scale8_video(color.b, brightness);
@@ -1013,7 +1096,8 @@ void fadePatternZones(uint8_t amount) {
   for (uint8_t zone = 0; zone < kZoneCount; ++zone) {
     if (!(activePattern.zoneMask & (1U << zone))) continue;
     fadeToBlackBy(zonePixels[zone],
-                  zones[zone].count * kPhysicalPixelsPerFixture, amount);
+                  zones[zone].count * zones[zone].physicalPixelsPerFixture,
+                  amount);
   }
 }
 
@@ -1282,7 +1366,7 @@ void startPattern(const String& requestedType, uint8_t zoneMask,
     clearPatternZones();
     activePattern.running = true;
   }
-  FastLED.show();
+  showLeds();
   sendDdpFrame(true);
 }
 
@@ -1346,7 +1430,7 @@ void updateActivePattern() {
     activePattern.lastStepAt = now;
   }
   if (changed) {
-    FastLED.show();
+    showLeds();
     sendDdpFrame();
   }
 }
@@ -1490,7 +1574,42 @@ void handleSetupWizard() {
         server.arg(preferenceKey("wname", i)).substring(0, 24);
     const String order = server.arg(preferenceKey("word", i));
     zones[i].order = validColorOrder(order) ? order : "GBR";
+    const String protocol = server.arg(preferenceKey("wproto", i));
+    if (!protocol.isEmpty()) {
+      zones[i].protocol = validLedProtocol(protocol) ? protocol : "UCS1903";
+    }
+    const int gpio = server.arg(preferenceKey("wgpio", i)).toInt();
+    if (server.hasArg(preferenceKey("wgpio", i))) {
+      if (!validZoneGpio(gpio)) {
+        sendText(400, String("Invalid GPIO for zone ") + (i + 1));
+        return;
+      }
+      zones[i].gpio = gpio;
+    }
+    if (server.hasArg(preferenceKey("wphys", i))) {
+      zones[i].physicalPixelsPerFixture = constrain(
+          server.arg(preferenceKey("wphys", i)).toInt(), 1,
+          kMaxPhysicalPixelsPerFixture);
+    }
   }
+
+  if (!enabledZoneGpiosAreUnique()) {
+    sendText(400, "Enabled zones must use different GPIOs");
+    return;
+  }
+  const int requestedVolts = server.arg("powerVolts").toInt();
+  const int requestedMilliamps = server.arg("powerMilliamps").toInt();
+  const int requestedPixelMilliamps = server.arg("pixelMilliamps").toInt();
+  if (requestedVolts < 5 || requestedVolts > 36 ||
+      requestedMilliamps < 100 || requestedMilliamps > 30000 ||
+      requestedPixelMilliamps < 1 || requestedPixelMilliamps > 100) {
+    sendText(400, "Power settings are outside the supported range");
+    return;
+  }
+  automaticPowerLimit = server.hasArg("powerLimitEnabled");
+  configuredLedVolts = requestedVolts;
+  configuredPowerMilliamps = requestedMilliamps;
+  configuredMilliampsPerPixel = requestedPixelMilliamps;
 
   const String requestedSsid = server.arg("ssid");
   const String requestedWifiPassword = server.arg("wifiPassword");
@@ -1529,6 +1648,10 @@ void handleSetupWizard() {
   }
 
   saveZoneConfiguration();
+  preferences.putBool("pwrLimit", automaticPowerLimit);
+  preferences.putUChar("pwrVolts", configuredLedVolts);
+  preferences.putUShort("pwrMa", configuredPowerMilliamps);
+  preferences.putUChar("pixelMa", configuredMilliampsPerPixel);
   if (requestedSsid != wifiSsid || !requestedWifiPassword.isEmpty()) {
     saveNetwork(requestedSsid, requestedWifiPassword);
   }
@@ -1551,6 +1674,40 @@ void handleSetupWizard() {
   scheduleRestart();
 }
 
+uint32_t estimateLedMilliamps() {
+  uint64_t milliampUnits = 0;
+  uint32_t physicalPixels = 0;
+  for (uint8_t zone = 0; zone < kZoneCount; ++zone) {
+    if (!zoneRegistered[zone]) continue;
+    const uint16_t count =
+        zones[zone].count * zones[zone].physicalPixelsPerFixture;
+    physicalPixels += count;
+    for (uint16_t pixel = 0; pixel < count; ++pixel) {
+      const CRGB& color = zonePixels[zone][pixel];
+      milliampUnits += static_cast<uint16_t>(color.r) + color.g + color.b;
+    }
+  }
+  const uint64_t activeMilliamps =
+      milliampUnits * configuredMilliampsPerPixel * brightness /
+      (765ULL * 255ULL);
+  return physicalPixels + activeMilliamps;  // Approx. 1 mA idle per pixel.
+}
+
+void showLeds() {
+  uint8_t appliedBrightness = brightness;
+  if (automaticPowerLimit) {
+    const uint32_t estimatedMilliamps = estimateLedMilliamps();
+    if (estimatedMilliamps > configuredPowerMilliamps) {
+      appliedBrightness = max<uint8_t>(
+          1, static_cast<uint32_t>(brightness) * configuredPowerMilliamps /
+                 estimatedMilliamps);
+    }
+  }
+  FastLED.setBrightness(appliedBrightness);
+  FastLED.show();
+  FastLED.setBrightness(brightness);
+}
+
 void sendStatusJson() {
   JsonDocument document;
   document["setupComplete"] = setupComplete;
@@ -1559,11 +1716,24 @@ void sendStatusJson() {
   document["buildDate"] = __DATE__ " " __TIME__;
   document["brightness"] = brightness;
   JsonObject powerSafety = document["powerSafety"].to<JsonObject>();
-  powerSafety["supplyVolts"] = kPowerSupplyVolts;
-  powerSafety["supplyMilliamps"] = kPowerSupplyMilliamps;
-  powerSafety["budgetMilliamps"] = kPowerBudgetMilliamps;
+  powerSafety["automaticLimiter"] = automaticPowerLimit;
+  powerSafety["supplyVolts"] = configuredLedVolts;
+  powerSafety["supplyMilliamps"] = configuredPowerMilliamps;
+  powerSafety["budgetMilliamps"] = automaticPowerLimit
+                                        ? configuredPowerMilliamps
+                                        : kPowerBudgetMilliamps;
   powerSafety["budgetPercent"] = kPowerBudgetPercent;
   powerSafety["maximumBrightness"] = kMaximumBrightness;
+  powerSafety["milliampsPerPixel"] = configuredMilliampsPerPixel;
+  const uint32_t estimatedMilliamps = estimateLedMilliamps();
+  powerSafety["estimatedMilliamps"] = estimatedMilliamps;
+  powerSafety["estimatedWatts"] =
+      estimatedMilliamps * configuredLedVolts / 1000.0;
+  powerSafety["utilizationPercent"] =
+      min<uint32_t>(999, estimatedMilliamps * 100UL /
+                             max<uint16_t>(configuredPowerMilliamps, 1));
+  powerSafety["limiting"] =
+      automaticPowerLimit && estimatedMilliamps > configuredPowerMilliamps;
   powerSafety["activeMeasurement"] = false;
   document["activePattern"] = activePattern.type;
   document["patternRunning"] = activePattern.running;
@@ -1619,7 +1789,9 @@ void sendStatusJson() {
     zone["name"] = zones[i].name;
     zone["count"] = zones[i].count;
     zone["order"] = zones[i].order;
-    zone["gpio"] = kZonePins[i];
+    zone["protocol"] = zones[i].protocol;
+    zone["gpio"] = zones[i].gpio;
+    zone["physicalPixelsPerFixture"] = zones[i].physicalPixelsPerFixture;
   }
   String response;
   serializeJson(document, response);
@@ -1657,7 +1829,7 @@ void handleBrightness() {
   brightness = requested;
   FastLED.setBrightness(brightness);
   preferences.putUChar("brightness", brightness);
-  FastLED.show();
+  showLeds();
   sendDdpFrame(true);
   sendText(200, "Brightness updated");
 }
@@ -1670,7 +1842,39 @@ void handleWebZones() {
     zones[i].name = server.arg(preferenceKey("name", i)).substring(0, 24);
     const String order = server.arg(preferenceKey("ord", i));
     zones[i].order = validColorOrder(order) ? order : "GBR";
+    const String protocol = server.arg(preferenceKey("proto", i));
+    zones[i].protocol = validLedProtocol(protocol) ? protocol : "UCS1903";
+    const int gpio = server.arg(preferenceKey("gpio", i)).toInt();
+    if (!validZoneGpio(gpio)) {
+      sendText(400, String("Invalid GPIO for zone ") + (i + 1));
+      return;
+    }
+    zones[i].gpio = gpio;
+    zones[i].physicalPixelsPerFixture = constrain(
+        server.arg(preferenceKey("phys", i)).toInt(), 1,
+        kMaxPhysicalPixelsPerFixture);
   }
+  if (!enabledZoneGpiosAreUnique()) {
+    sendText(400, "Enabled zones must use different GPIOs");
+    return;
+  }
+  const int requestedVolts = server.arg("powerVolts").toInt();
+  const int requestedMilliamps = server.arg("powerMilliamps").toInt();
+  const int requestedPixelMilliamps = server.arg("pixelMilliamps").toInt();
+  if (requestedVolts < 5 || requestedVolts > 36 ||
+      requestedMilliamps < 100 || requestedMilliamps > 30000 ||
+      requestedPixelMilliamps < 1 || requestedPixelMilliamps > 100) {
+    sendText(400, "Power settings are outside the supported range");
+    return;
+  }
+  automaticPowerLimit = server.hasArg("powerLimitEnabled");
+  configuredLedVolts = requestedVolts;
+  configuredPowerMilliamps = requestedMilliamps;
+  configuredMilliampsPerPixel = requestedPixelMilliamps;
+  preferences.putBool("pwrLimit", automaticPowerLimit);
+  preferences.putUChar("pwrVolts", configuredLedVolts);
+  preferences.putUShort("pwrMa", configuredPowerMilliamps);
+  preferences.putUChar("pixelMa", configuredMilliampsPerPixel);
   saveZoneConfiguration();
   sendText(200, "Zone settings saved; rebooting in 1.5 seconds");
   scheduleRestart();
@@ -2059,13 +2263,31 @@ void savePatternsJson(const String& json) {
     sendText(400, String("Invalid patterns JSON: ") + error.c_str());
     return;
   }
-  File file = LittleFS.open("/patterns.json", "w");
+  File file = LittleFS.open("/patterns.tmp", "w");
   if (!file) {
     sendText(500, "Unable to open pattern storage");
     return;
   }
-  file.print(json);
+  if (serializeJson(document, file) == 0) {
+    file.close();
+    LittleFS.remove("/patterns.tmp");
+    sendText(500, "Unable to write pattern storage");
+    return;
+  }
   file.close();
+  LittleFS.remove("/patterns.backup");
+  if (LittleFS.exists("/patterns.json") &&
+      !LittleFS.rename("/patterns.json", "/patterns.backup")) {
+    LittleFS.remove("/patterns.tmp");
+    sendText(500, "Unable to prepare pattern storage");
+    return;
+  }
+  if (!LittleFS.rename("/patterns.tmp", "/patterns.json")) {
+    LittleFS.rename("/patterns.backup", "/patterns.json");
+    sendText(500, "Unable to activate restored patterns");
+    return;
+  }
+  LittleFS.remove("/patterns.backup");
   scheduleAppliedKey = "";
   lastScheduleCheckAt = millis() - 15000;
   sendText(200, "Patterns saved");
@@ -2265,6 +2487,34 @@ bool sportsWindowActive(JsonObjectConst sports, bool currentEligible,
          (previousEligible && minute < off);
 }
 
+String localDateKey(const tm& date) {
+  char value[11];
+  snprintf(value, sizeof(value), "%04d-%02d-%02d", date.tm_year + 1900,
+           date.tm_mon + 1, date.tm_mday);
+  return String(value);
+}
+
+bool oneOffDateEligible(JsonObjectConst rule, const tm& date) {
+  return String(rule["date"] | "") == localDateKey(date);
+}
+
+bool oneOffWindowActive(JsonObjectConst rule, time_t timestamp) {
+  tm current = {};
+  tm previous = {};
+  localtime_r(&timestamp, &current);
+  const time_t previousTimestamp = timestamp - 86400;
+  localtime_r(&previousTimestamp, &previous);
+  const int minute = current.tm_hour * 60 + current.tm_min;
+  const int on = resolveTimeExpression(rule["on"], current, timestamp);
+  const int off = resolveTimeExpression(rule["off"], current, timestamp);
+  if (on < 0 || off < 0) return false;
+  if (on < off) {
+    return oneOffDateEligible(rule, current) && minute >= on && minute < off;
+  }
+  return (oneOffDateEligible(rule, current) && minute >= on) ||
+         (oneOffDateEligible(rule, previous) && minute < off);
+}
+
 ScheduleDecision evaluateSchedulesAt(JsonDocument& document,
                                      time_t timestamp) {
   ScheduleDecision result;
@@ -2273,6 +2523,23 @@ ScheduleDecision evaluateSchedulesAt(JsonDocument& document,
   localtime_r(&timestamp, &current);
   const time_t previousTimestamp = timestamp - 86400;
   localtime_r(&previousTimestamp, &previous);
+
+  for (JsonObjectConst rule : document["oneOff"].as<JsonArrayConst>()) {
+    if (!(rule["enabled"] | true)) continue;
+    const int on = resolveTimeExpression(rule["on"], current, timestamp);
+    const int off = resolveTimeExpression(rule["off"], current, timestamp);
+    const bool relevant = oneOffDateEligible(rule, current) ||
+        (on >= off && oneOffDateEligible(rule, previous));
+    if (!relevant) continue;
+    result.managed = true;
+    result.oneOff = true;
+    result.priority = 2000;
+    result.active = oneOffWindowActive(rule, timestamp);
+    result.patternId = rule["patternId"] | 0;
+    result.zoneMask = configuredZoneMask(rule);
+    result.name = String(rule["name"] | "One-time override");
+    return result;
+  }
 
   JsonObjectConst sports = document["sports"].as<JsonObjectConst>();
   if ((sports["enabled"] | false) &&
@@ -2339,7 +2606,8 @@ ScheduleDecision evaluateSchedulesAt(JsonDocument& document,
 
 String scheduleDecisionKey(const ScheduleDecision& decision) {
   return String(decision.managed) + ":" + String(decision.active) + ":" +
-         String(decision.sports) + ":" + String(decision.holiday) + ":" +
+         String(decision.oneOff) + ":" + String(decision.sports) + ":" +
+         String(decision.holiday) + ":" +
          decision.patternId + ":" + decision.zoneMask + ":" + decision.name;
 }
 
@@ -2426,6 +2694,22 @@ time_t findNextScheduleTransition(JsonDocument& document, time_t now,
     date.tm_mday += dayOffset;
     const time_t noon = mktime(&date);
     localtime_r(&noon, &date);
+
+    for (JsonObjectConst rule : document["oneOff"].as<JsonArrayConst>()) {
+      if (!(rule["enabled"] | true) || !oneOffDateEligible(rule, date)) {
+        continue;
+      }
+      const int on = resolveTimeExpression(rule["on"], date, noon);
+      const int off = resolveTimeExpression(rule["off"], date, noon);
+      if (on < 0 || off < 0) continue;
+      considerScheduleBoundary(document, now,
+                               localScheduleBoundary(date, 0), nearest);
+      considerScheduleBoundary(document, now,
+                               localScheduleBoundary(date, on), nearest);
+      considerScheduleBoundary(document, now,
+                               localScheduleBoundary(date, off, on >= off),
+                               nearest);
+    }
 
     JsonObjectConst sports = document["sports"].as<JsonObjectConst>();
     if ((sports["enabled"] | false) && sports["teams"].is<JsonArray>()) {
@@ -2537,12 +2821,141 @@ void initializeScheduleStorage() {
   loadScheduleLocation();
 }
 
+bool validLayoutDocument(JsonDocument& document, String& error) {
+  if (!document.is<JsonObject>() || !document["paths"].is<JsonArray>()) {
+    error = "Layout JSON must contain a paths array";
+    return false;
+  }
+  const double width = document["width"] | 0.0;
+  const double height = document["height"] | 0.0;
+  JsonArrayConst paths = document["paths"].as<JsonArrayConst>();
+  if (width <= 0 || width > 10000 || height <= 0 || height > 10000 ||
+      paths.size() > 64) {
+    error = "Layout dimensions or path count are invalid";
+    return false;
+  }
+  for (JsonObjectConst path : paths) {
+    const String id = path["id"] | "";
+    const String deviceId = path["deviceId"] | "";
+    const int zone = path["zone"] | -1;
+    const int count = path["count"] | 0;
+    const double scale = path["spatialScale"] | 0.0;
+    JsonArrayConst points = path["points"].as<JsonArrayConst>();
+    if (id.isEmpty() || id.length() > 40 || deviceId.isEmpty() ||
+        deviceId.length() > 40 || zone < 0 || zone > 31 || count < 1 ||
+        count > 10000 || scale < 0.1 || scale > 10 || points.size() < 2 ||
+        points.size() > 16) {
+      error = String("Invalid layout path: ") + id;
+      return false;
+    }
+    for (JsonArrayConst point : points) {
+      if (point.size() != 2) {
+        error = String("Invalid point in layout path: ") + id;
+        return false;
+      }
+      const double x = point[0] | -10001.0;
+      const double y = point[1] | -10001.0;
+      if (x < 0 || x > width || y < 0 || y > height) {
+        error = String("Layout point is outside the canvas: ") + id;
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+bool saveLayoutDocument(const String& json, String& error) {
+  JsonDocument document;
+  const DeserializationError parseError = deserializeJson(document, json);
+  if (parseError || !validLayoutDocument(document, error)) {
+    if (error.isEmpty()) error = String("Invalid layout JSON: ") + parseError.c_str();
+    return false;
+  }
+  File file = LittleFS.open("/layout.tmp", "w");
+  if (!file || serializeJson(document, file) == 0) {
+    if (file) file.close();
+    LittleFS.remove("/layout.tmp");
+    error = "Unable to write layout storage";
+    return false;
+  }
+  file.close();
+  LittleFS.remove("/layout.backup");
+  if (LittleFS.exists("/layout.json")) {
+    LittleFS.rename("/layout.json", "/layout.backup");
+  }
+  if (!LittleFS.rename("/layout.tmp", "/layout.json")) {
+    LittleFS.rename("/layout.backup", "/layout.json");
+    error = "Unable to activate layout";
+    return false;
+  }
+  LittleFS.remove("/layout.backup");
+  return true;
+}
+
+void initializeLayoutStorage() {
+  if (LittleFS.exists("/layout.json")) return;
+  JsonDocument document;
+  document["version"] = 1;
+  document["width"] = 100;
+  document["height"] = 100;
+  document["units"] = "ft";
+  JsonArray paths = document["paths"].to<JsonArray>();
+  for (uint8_t zone = 0; zone < kZoneCount; ++zone) {
+    JsonObject path = paths.add<JsonObject>();
+    path["id"] = String("local-zone-") + zone;
+    path["deviceId"] = chipId;
+    path["zone"] = zone;
+    path["name"] = zones[zone].name;
+    path["count"] = zones[zone].count;
+    path["reverse"] = false;
+    path["spatialScale"] = 1.0;
+    path["layer"] = zone;
+    JsonArray points = path["points"].to<JsonArray>();
+    JsonArray start = points.add<JsonArray>();
+    start.add(10);
+    start.add(15 + zone * 15);
+    JsonArray end = points.add<JsonArray>();
+    end.add(90);
+    end.add(15 + zone * 15);
+  }
+  File file = LittleFS.open("/layout.json", "w");
+  if (file) {
+    serializeJson(document, file);
+    file.close();
+  }
+}
+
+void handleGetLayout() {
+  File file = LittleFS.open("/layout.json", "r");
+  if (!file) {
+    sendText(404, "Layout storage is unavailable");
+    return;
+  }
+  addCorsHeaders();
+  server.streamFile(file, "application/json");
+  file.close();
+}
+
+void handleSaveLayout() {
+  if (!server.hasArg("plain")) {
+    sendText(400, "Missing layout JSON body");
+    return;
+  }
+  String error;
+  if (!saveLayoutDocument(server.arg("plain"), error)) {
+    sendText(400, error);
+    return;
+  }
+  sendText(200, "Layout saved");
+}
+
 bool saveScheduleDocument(const String& json, String& error) {
   JsonDocument document;
   const DeserializationError parseError = deserializeJson(document, json);
   if (parseError || !document.is<JsonObject>() ||
       !document["weekly"].is<JsonArray>() ||
-      !document["holidays"].is<JsonArray>()) {
+      !document["holidays"].is<JsonArray>() ||
+      (!document["oneOff"].isNull() && !document["oneOff"].is<JsonArray>())) {
     error = "Schedule JSON must contain weekly and holidays arrays";
     return false;
   }
@@ -2578,6 +2991,190 @@ bool saveScheduleDocument(const String& json, String& error) {
   nextScheduleTransition = 0;
   lastScheduleCheckAt = millis() - 15000;
   return true;
+}
+
+void streamLittleFsFile(const char* path, const char* fallback) {
+  File file = LittleFS.open(path, "r");
+  if (!file) {
+    server.sendContent(fallback);
+    return;
+  }
+  char buffer[1024];
+  while (file.available()) {
+    const size_t count = file.readBytes(buffer, sizeof(buffer));
+    if (count == 0) break;
+    server.sendContent(buffer, count);
+  }
+  file.close();
+}
+
+void handleBackupDownload() {
+  JsonDocument settingsDocument;
+  JsonObject settings = settingsDocument.to<JsonObject>();
+  settings["brightness"] = brightness;
+  settings["automaticUpdates"] = automaticUpdates;
+  settings["compatibilityApEnabled"] = compatibilityApEnabled;
+  JsonObject power = settings["powerLimit"].to<JsonObject>();
+  power["enabled"] = automaticPowerLimit;
+  power["volts"] = configuredLedVolts;
+  power["milliamps"] = configuredPowerMilliamps;
+  power["milliampsPerPixel"] = configuredMilliampsPerPixel;
+  JsonObject wled = settings["wledSync"].to<JsonObject>();
+  wled["enabled"] = wledSync.enabled;
+  wled["destination"] = wledSync.destination;
+  wled["pixelCount"] = wledSync.pixelCount;
+  wled["sourceZone"] = wledSync.sourceZone;
+  JsonArray savedZones = settings["zones"].to<JsonArray>();
+  for (uint8_t i = 0; i < kZoneCount; ++i) {
+    JsonObject zone = savedZones.add<JsonObject>();
+    zone["enabled"] = zones[i].enabled;
+    zone["count"] = zones[i].count;
+    zone["name"] = zones[i].name;
+    zone["order"] = zones[i].order;
+    zone["protocol"] = zones[i].protocol;
+    zone["gpio"] = zones[i].gpio;
+    zone["physicalPixelsPerFixture"] =
+        zones[i].physicalPixelsPerFixture;
+  }
+  String serializedSettings;
+  serializeJson(settingsDocument, serializedSettings);
+
+  addCorsHeaders();
+  server.sendHeader("Content-Disposition",
+                    "attachment; filename=leaflights-backup.json");
+  server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  server.send(200, "application/json", "");
+  server.sendContent(String("{\"format\":\"leaflights-backup\","
+                            "\"version\":1,\"firmware\":\"") +
+                     kFirmwareVersion + "\",\"settings\":");
+  server.sendContent(serializedSettings);
+  server.sendContent(",\"patterns\":");
+  streamLittleFsFile("/patterns.json", "[]");
+  server.sendContent(",\"schedules\":");
+  streamLittleFsFile("/schedules.json", kDefaultSchedules);
+  server.sendContent(",\"layout\":");
+  streamLittleFsFile("/layout.json",
+                     "{\"version\":1,\"width\":100,\"height\":100,"
+                     "\"units\":\"ft\",\"paths\":[]}");
+  server.sendContent("}");
+  server.sendContent("");
+}
+
+void handleRestoreSettings() {
+  if (!server.hasArg("plain")) {
+    sendText(400, "Missing restore settings JSON");
+    return;
+  }
+  JsonDocument document;
+  const DeserializationError parseError =
+      deserializeJson(document, server.arg("plain"));
+  if (parseError || !document.is<JsonObject>() ||
+      !document["zones"].is<JsonArray>() ||
+      !document["wledSync"].is<JsonObject>()) {
+    sendText(400, "Backup settings are invalid");
+    return;
+  }
+
+  const int restoredBrightness = document["brightness"] | -1;
+  JsonObjectConst restoredPower = document["powerLimit"].as<JsonObjectConst>();
+  const int restoredPowerVolts = restoredPower.isNull()
+                                      ? kPowerSupplyVolts
+                                      : (restoredPower["volts"] | -1);
+  const int restoredPowerMilliamps = restoredPower.isNull()
+                                           ? kPowerSupplyMilliamps
+                                           : (restoredPower["milliamps"] | -1);
+  const int restoredPixelMilliamps = restoredPower.isNull()
+                                         ? 55
+                                         : (restoredPower["milliampsPerPixel"] | 55);
+  JsonObjectConst restoredWled = document["wledSync"].as<JsonObjectConst>();
+  String restoredDestination = restoredWled["destination"] | "";
+  restoredDestination.trim();
+  const int restoredPixels = restoredWled["pixelCount"] | -1;
+  const int restoredSource = restoredWled["sourceZone"] | -2;
+  JsonArrayConst restoredZones = document["zones"].as<JsonArrayConst>();
+  if (restoredBrightness < 1 || restoredBrightness > kMaximumBrightness ||
+      restoredDestination.isEmpty() || restoredDestination.length() > 64 ||
+      restoredDestination.indexOf("://") >= 0 ||
+      restoredDestination.indexOf(' ') >= 0 || restoredPixels < 1 ||
+      restoredPixels > kMaxLogicalLeds || restoredSource < -1 ||
+      restoredSource >= kZoneCount || restoredZones.size() == 0 ||
+      restoredPowerVolts < 5 || restoredPowerVolts > 36 ||
+      restoredPowerMilliamps < 100 || restoredPowerMilliamps > 30000 ||
+      restoredPixelMilliamps < 1 || restoredPixelMilliamps > 100) {
+    sendText(400, "Backup settings contain invalid controller values");
+    return;
+  }
+  for (uint8_t i = 0; i < kZoneCount && i < restoredZones.size(); ++i) {
+    JsonObjectConst restored = restoredZones[i].as<JsonObjectConst>();
+    const int count = restored["count"] | -1;
+    const String name = restored["name"] | "";
+    const String order = restored["order"] | "";
+    const String protocol = restored["protocol"] | "UCS1903";
+    const int gpio = restored["gpio"] | kZonePins[i];
+    const int physicalPixels = restored["physicalPixelsPerFixture"] | 2;
+    if (count < 1 || count > kMaxLogicalLeds || name.isEmpty() ||
+        name.length() > 24 || !validColorOrder(order) ||
+        !validLedProtocol(protocol) || !validZoneGpio(gpio) ||
+        physicalPixels < 1 ||
+        physicalPixels > kMaxPhysicalPixelsPerFixture) {
+      sendText(400, String("Backup contains invalid zone ") + (i + 1));
+      return;
+    }
+  }
+  for (uint8_t i = 0; i < kZoneCount && i < restoredZones.size(); ++i) {
+    JsonObjectConst first = restoredZones[i].as<JsonObjectConst>();
+    if (!(first["enabled"] | false)) continue;
+    for (uint8_t j = i + 1; j < kZoneCount && j < restoredZones.size(); ++j) {
+      JsonObjectConst second = restoredZones[j].as<JsonObjectConst>();
+      if ((second["enabled"] | false) &&
+          (first["gpio"] | kZonePins[i]) ==
+              (second["gpio"] | kZonePins[j])) {
+        sendText(400, "Backup enables multiple zones on the same GPIO");
+        return;
+      }
+    }
+  }
+
+  brightness = restoredBrightness;
+  automaticUpdates = document["automaticUpdates"] | false;
+  compatibilityApEnabled = document["compatibilityApEnabled"] | false;
+  automaticPowerLimit = restoredPower.isNull()
+                            ? false
+                            : (restoredPower["enabled"] | false);
+  configuredLedVolts = restoredPowerVolts;
+  configuredPowerMilliamps = restoredPowerMilliamps;
+  configuredMilliampsPerPixel = restoredPixelMilliamps;
+  wledSync.enabled = restoredWled["enabled"] | false;
+  wledSync.destination = restoredDestination;
+  wledSync.pixelCount = restoredPixels;
+  wledSync.sourceZone = restoredSource;
+  for (uint8_t i = 0; i < kZoneCount && i < restoredZones.size(); ++i) {
+    JsonObjectConst restored = restoredZones[i].as<JsonObjectConst>();
+    zones[i].enabled = restored["enabled"] | false;
+    zones[i].count = restored["count"];
+    zones[i].name = String(restored["name"] | "");
+    zones[i].order = String(restored["order"] | "GBR");
+    zones[i].protocol = String(restored["protocol"] | "UCS1903");
+    zones[i].gpio = restored["gpio"] | kZonePins[i];
+    zones[i].physicalPixelsPerFixture =
+        restored["physicalPixelsPerFixture"] | 2;
+  }
+
+  preferences.putUChar("brightness", brightness);
+  preferences.putBool("autoUpdate", automaticUpdates);
+  preferences.putBool("compatAp", compatibilityApEnabled);
+  preferences.putBool("pwrLimit", automaticPowerLimit);
+  preferences.putUChar("pwrVolts", configuredLedVolts);
+  preferences.putUShort("pwrMa", configuredPowerMilliamps);
+  preferences.putUChar("pixelMa", configuredMilliampsPerPixel);
+  preferences.putBool("ddpEnabled", wledSync.enabled);
+  preferences.putString("ddpDest", wledSync.destination);
+  preferences.putUShort("ddpPixels", wledSync.pixelCount);
+  preferences.putChar("ddpSource", wledSync.sourceZone);
+  preferences.putUShort("patternLibrary", kPatternLibraryVersion);
+  saveZoneConfiguration();
+  sendText(200, "Backup restored; rebooting in 2 seconds");
+  scheduleRestart(2000);
 }
 
 bool refreshSportsScheduleFeed(String& error) {
@@ -2793,7 +3390,8 @@ void serviceSchedules() {
     return;
   }
   scheduleRuntimeStatus = decision.active
-      ? String(decision.sports ? "Sports: " :
+      ? String(decision.oneOff ? "One-time: " :
+               decision.sports ? "Sports: " :
                decision.holiday ? "Holiday: " : "Weekly: ") + decision.name
       : "Scheduled off";
   if (key == scheduleAppliedKey) return;
@@ -2836,6 +3434,12 @@ void configureWebServer() {
   });
   server.on("/api/schedules", HTTP_POST, []() {
     if (requireWebUiAuth()) handleSaveSchedules();
+  });
+  server.on("/api/layout", HTTP_GET, []() {
+    if (requireWebUiAuth()) handleGetLayout();
+  });
+  server.on("/api/layout", HTTP_POST, []() {
+    if (requireWebUiAuth()) handleSaveLayout();
   });
   server.on("/api/sports/refresh", HTTP_POST, []() {
     if (!requireWebUiAuth()) return;
@@ -2900,6 +3504,12 @@ void configureWebServer() {
   });
   server.on("/api/wled-sync", HTTP_POST, []() {
     if (requireWebUiAuth()) handleWledSyncConfiguration();
+  });
+  server.on("/api/backup", HTTP_GET, []() {
+    if (requireWebUiAuth()) handleBackupDownload();
+  });
+  server.on("/api/restore-settings", HTTP_POST, []() {
+    if (requireWebUiAuth()) handleRestoreSettings();
   });
   server.on("/api/update", HTTP_POST, handleFirmwareUploadComplete,
             handleFirmwareUpload);
@@ -3019,14 +3629,14 @@ void handleSerialCommand(String line) {
     }
     fillZone(zone, CRGB(constrain(red, 0, 255), constrain(green, 0, 255),
                         constrain(blue, 0, 255)));
-    FastLED.show();
+    showLeds();
     Serial.println("Zone updated");
   } else if (sscanf(line.c_str(), "brightness %d", &value) == 1 &&
              value >= 1 && value <= kMaximumBrightness) {
     brightness = value;
     FastLED.setBrightness(brightness);
     preferences.putUChar("brightness", brightness);
-    FastLED.show();
+    showLeds();
     Serial.println("Brightness updated");
   } else {
     Serial.println("Unknown command; enter help");
@@ -3046,6 +3656,7 @@ void setup() {
   loadConfiguration();
   initializePatternStorage();
   initializeScheduleStorage();
+  initializeLayoutStorage();
   initializeLeds();
   configureWifi();
   configTzTime(scheduleTimezone.c_str(), "pool.ntp.org", "time.nist.gov");

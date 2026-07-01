@@ -15,19 +15,40 @@ This Arduino sketch targets the Unexpected Maker TinyS3 and reproduces the LED-o
 
 The original GPIOs are not all exposed on the TinyS3. The replacement mapping uses exposed GPIOs 1, 2, 4, 5, 6, and 7. It avoids GPIOs 0 and 3 because they are ESP32-S3 boot-strapping pins.
 
-The firmware uses FastLED with timing parameters equivalent to `UCS1903` (`500 ns, 1500 ns, 500 ns`). Each configured logical Oelo LED is written twice as two consecutive physical RGB pixels. The firmware allows up to 1,000 logical LEDs per zone and allocates 2,000 `CRGB` entries per zone.
+Each zone can use FastLED's `UCS1903` or `WS2812B` (`WS281x`) output.
+Protocol, GPIO, color order, and one- or two-physical-pixels-per-logical-fixture
+mapping are independently configurable. Existing Oelo zones default to UCS1903
+with two physical pixels per fixture. The firmware allows up to 1,000 logical
+LEDs per zone and allocates 2,000 `CRGB` entries per zone.
+
+For the two modified Govee runs, use these migration profiles:
+
+| Run | Protocol | Color order | GPIO | Logical pixels | Physical pixels/fixture |
+| --- | --- | --- | ---: | ---: | ---: |
+| Existing controller `.182` | WS281x | GRB | 2 | 140 | 1 |
+| Existing controller `.181` | WS281x | GRB | 2 | 93 | 1 |
+
+The `.182` WLED controller currently uses a 5 V / 2,000 mA automatic limit;
+the `.181` controller has its limiter disabled. Configure a verified safe limit
+before moving either run to this firmware.
 
 The configured color order can be `RGB`, `RBG`, `GRB`, `GBR`, `BRG`, or `BGR`; missing or invalid configuration defaults to `GBR`.
 
-## Brightness and power-supply ceiling
+## Brightness and power safeguard
 
-This build is configured for the installed **36 V, 5.6 A (201.6 W)** power
-supply. Global brightness is hard-limited to **204/255 (80%)**, reserving 20%
-of the supply's nameplate capacity. The default remains 32/255.
+Global user brightness remains hard-limited to **204/255 (80%)**. The home
+screen also shows estimated LED demand on a green-to-red utilization gauge.
+Settings provides an automatic current limiter, supply voltage/current fields,
+and an adjustable full-white current estimate per physical pixel. When demand
+exceeds the configured current, the firmware reduces only the brightness sent
+to the LEDs; requested brightness and animation state remain unchanged.
 
-Oelo encodes brightness in each pattern's RGB values. This firmware applies
-the global brightness control as an additional scale, so an Oelo pattern at
-full RGB output is still capped at 80% by the controller.
+Configure the actual splitter output feeding the LEDs, not its PoE input rating.
+The LINOVISION POE-SP02BT presets include 24 V / 2.5 A and 5 V / 5 A. Its two
+DC outputs share a 72 W maximum, so a lower wiring, connector, LED, or
+shared-output limit must take precedence. This safeguard is model-based, not a
+current sensor: measure a worst-case white scene and use a conservative
+per-pixel estimate.
 
 This is a conservative output ceiling, not active current measurement. Actual
 load depends on the installed fixtures, colors, wiring, and voltage drop. Do
@@ -182,6 +203,26 @@ Animated patterns send each rendered frame, capped at roughly 40 frames per
 second. Disabling sync stops the stream; WLED resumes its previous state after
 its configured realtime timeout. See
 [../../docs/wled-sync.md](../../docs/wled-sync.md) for limitations.
+
+## Backup and restore
+
+Open **Settings → Backup and restore** to download a versioned JSON backup or
+restore one. Backups include zones, brightness, WLED sync, update and
+compatibility-network preferences, saved patterns, and schedules. Passwords,
+Wi-Fi credentials, web-login hashes, and browser sessions are not exported.
+Restore validates each section, replaces the stored patterns and schedules,
+applies controller settings last, and reboots the controller.
+
+## Layout designer
+
+Open **Settings → Layout designer** to place controller zones and future peer
+controller runs on a shared 2D canvas. Runs may be straight or bent polylines
+and store their controller ID, zone, logical fixture/pixel count, direction,
+spatial scale, and layer. Drag the colored control points to position a run;
+green marks its data start and red marks its end. Horizontal, vertical, and
+animated-wave previews verify coordinate alignment across stories and strips
+with different LED densities. The saved layout is included in controller
+backups and is the coordinate model used by multi-controller synchronization.
 
 ## Remote firmware updates
 
